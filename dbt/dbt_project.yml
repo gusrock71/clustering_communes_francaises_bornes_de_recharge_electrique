@@ -1,0 +1,91 @@
+name: 've_pipeline_dbt'
+version: '1.0.0'
+config-version: 2
+
+# Bascule décidée le 2026-08-21 : dbt remplace la jointure/le nettoyage/le
+# feature engineering jusque-là faits en DuckDB directement sur S3
+# (ve_pipeline/cleaning, ve_pipeline/jointure, ve_pipeline/features -- gardés
+# dans le dépôt à titre de sauvegarde/référence, plus utilisés en pipeline
+# principal). dbt lit les tables raw__* déjà chargées dans Postgres/Neon par
+# ve_pipeline/loading/postgres_loader.py et matérialise tout le reste
+# (staging, intermédiaire, mart) comme tables/vues DANS la même base Postgres
+# -- il n'y a plus de fichier "cleaned"/"staging"/"clustering_dataset" sur S3
+# pour ce qui est repris ici.
+
+profile: 've_pipeline'
+
+# Nécessaire à int_irve_cleaned (unaccent(), reconstitution des
+# code_insee_commune manquants via l'adresse). Extension standard fournie
+# par Postgres/Neon (contrib), idempotent si déjà présente.
+on-run-start:
+  - "create extension if not exists unaccent"
+
+model-paths: ["models"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+analysis-paths: ["analyses"]
+
+# Constantes des features de "couverture" du clustering K-Means
+# (mart_clustering_dataset.sql, décision du 2026-08-21). Amenées à évoluer
+# (moyennes/réglementation actualisées) -- modifier ici plutôt qu'en dur
+# dans le SQL.
+vars:
+  # AFIR (règlement UE en vigueur depuis avril 2024) : puissance de recharge
+  # publique minimale par VE à batterie en circulation.
+  afir_kw_par_ve: 1.3
+  # Moyenne nationale observée (Insee, 2026) de points de charge pour 100 VE
+  # en circulation, par zone de densité -- sert à normaliser
+  # ratio_pdc_par_100_ve (voir mart_clustering_dataset.sql).
+  benchmark_pdc_urbain: 0.24
+  benchmark_pdc_rural: 0.10
+  # Plafond appliqué à taux_couverture_afir et ratio_pdc_par_100_ve quand le
+  # stock VE estimé au dénominateur est non nul mais très faible (ratio
+  # sinon instable/explosif sur un tout petit échantillon).
+  plafond_ratio_couverture: 3.0
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  ve_pipeline_dbt:
+    staging:
+      +materialized: view
+      +schema: staging
+    intermediate:
+      +materialized: view
+      +schema: intermediate
+    marts:
+      +materialized: table
+      +schema: marts
+
+seeds:
+  ve_pipeline_dbt:
+    ref_codes_postaux:
+      +schema: staging
+      # Le fichier source (La Poste, "Base officielle des codes postaux",
+      # via data.gouv.fr) est en ";", reconverti en UTF-8 depuis l'export
+      # Latin-1 d'origine (voir dbt/seeds/ref_codes_postaux.csv). Colonnes
+      # codes forcées en texte : dbt/agate devine sinon un type numérique et
+      # perd les zéros en tête (ex: "01000" -> 1000), cassant toute jointure
+      # sur code_commune_insee/code_postal.
+      +delimiter: ";"
+      +column_types:
+        code_commune_insee: varchar(10)
+        code_postal: varchar(10)
+    ref_densite_communes:
+      +schema: staging
+      # Grille de densité Insee 2026 (millésime au 01/01/2026, géographie
+      # RP 2021), décision du 2026-08-21 : seule la colonne DENS (3 postes)
+      # est reprise, regroupée en 2 valeurs -- 'urbain' (Urbain dense +
+      # Urbain intermédiaire) / 'rural' (Rural) -- DENS_AAV et DENS7 (plus
+      # fins) ne sont pas repris pour l'instant. Extrait à la main depuis
+      # fichier_diffusion_2026.xlsx (feuille "Maille communale", 34 875
+      # communes, aucun doublon de CODGEO, aucune valeur DENS hors 1/2/3).
+      # code_commune forcé en texte pour ne pas perdre les zéros en tête
+      # (ex. "01001") ni casser les codes non numériques (Corse "2A"/"2B").
+      +delimiter: ";"
+      +column_types:
+        code_commune: varchar(10)

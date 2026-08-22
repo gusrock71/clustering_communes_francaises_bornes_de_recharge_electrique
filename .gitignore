@@ -1,0 +1,19 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+dbt/.user.yml
+mlruns/
+mlflow.db
+.DS_Store
+
+# Données brutes volumineuses (source : S3, cf. ve_pipeline/ingestion) --
+# ne doivent jamais être versionnées (poids, secret de source, dépasse la
+# limite GitHub de 100 Mo pour plusieurs d'entre elles).
+*.csv
+*.xlsx
+!dbt/seeds/*.csv

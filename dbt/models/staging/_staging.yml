@@ -1,0 +1,29 @@
+version: 2
+
+models:
+  - name: stg_irve
+    description: IRVE typé (puissance_nominale en double, booléen consolidated_is_code_insee_verified)
+    columns:
+      - name: id_pdc_itinerance
+        description: Identifiant du point de charge (peut être vide ou "Non concerné" sur des lignes réelles)
+
+  - name: stg_immatriculations_neuf
+    description: >
+      Filtré sur groupe/categorie (décision du 2026-08-21) : ne garde que
+      VP, VUL et CATL/MOTOCYCLETTE -- véhicules qui rechargent réellement
+      sur le réseau de bornes IRVE public. Exclut cyclomoteur, voiturette
+      (recharge domicile), AUTRES, PL, TCP (infra dédiée hors périmètre).
+      Voir le commentaire en tête du fichier .sql pour le détail.
+    columns:
+      - name: code_commune
+
+  - name: stg_immatriculations_occasion
+    description: >
+      Même filtre groupe/categorie que stg_immatriculations_neuf, voir sa
+      description.
+    columns:
+      - name: code_commune
+
+  - name: stg_enedis
+    columns:
+      - name: code_commune

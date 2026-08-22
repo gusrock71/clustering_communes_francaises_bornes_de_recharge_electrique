@@ -1,0 +1,19 @@
+version: 2
+
+sources:
+  - name: raw
+    description: >
+      Tables brutes chargées par ve_pipeline/loading/postgres_loader.py
+      depuis S3 (raw/<source>/dt=.../*.csv). Colonnes en TEXT, filtrées via
+      DROPPED_COLUMNS/KEPT_COLUMNS (contrainte de quota Neon, voir le
+      docstring du loader) -- pas de transformation métier à ce stade.
+    schema: public
+    tables:
+      - name: raw__irve__irve_consolide
+        description: IRVE brut (colonnes utiles au nettoyage/à la jointure uniquement)
+      - name: raw__immatriculations__immatriculations_neuf
+        description: Immatriculations neuf, IMMAT_2018...IMMAT_2025 (2010-2017 exclus, voir postgres_loader.DROPPED_COLUMNS)
+      - name: raw__immatriculations__immatriculations_occasion
+        description: Immatriculations occasion, IMMAT_2018...IMMAT_2025 (2010-2017 exclus, voir postgres_loader.DROPPED_COLUMNS)
+      - name: raw__enedis_conso__enedis_conso_commune_2024
+        description: Enedis consommation par secteur d'activité/commune, 2024 uniquement

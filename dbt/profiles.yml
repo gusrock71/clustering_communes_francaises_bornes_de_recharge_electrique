@@ -1,0 +1,24 @@
+# Profil dbt pour ce projet. dbt-postgres n'accepte pas un DSN unique (type
+# DATABASE_URL) : il lui faut les champs séparés ci-dessous, à positionner en
+# variables d'environnement (ex: dans .env, chargées via `source .env` ou
+# `export $(grep -v '^#' .env | xargs)` avant `dbt run` -- ou en les ajoutant
+# directement dans ton shell). Valeurs à récupérer dans la console Neon
+# (Connection Details), ce sont les mêmes qui composent ton DATABASE_URL
+# actuel : postgresql+psycopg2://<user>:<password>@<host>/<dbname>.
+#
+# Ce fichier doit être copié vers ~/.dbt/profiles.yml, ou référencé via
+# `dbt run --profiles-dir .` depuis la racine du projet.
+ve_pipeline:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('DBT_NEON_HOST') }}"
+      port: "{{ env_var('DBT_NEON_PORT', '5432') | as_number }}"
+      user: "{{ env_var('DBT_NEON_USER') }}"
+      password: "{{ env_var('DBT_NEON_PASSWORD') }}"
+      dbname: "{{ env_var('DBT_NEON_DBNAME') }}"
+      schema: public
+      sslmode: require
+      threads: 4
+      keepalives_idle: 0

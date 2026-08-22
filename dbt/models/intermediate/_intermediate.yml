@@ -1,0 +1,35 @@
+version: 2
+
+models:
+  - name: int_irve_cleaned
+    description: >
+      IRVE dédupliqué (un point de charge = une ligne) et code_insee_commune
+      reconstitué depuis adresse_station quand manquant. Port dbt de
+      ve_pipeline/cleaning/irve_code_commune.py, gardé en sauvegarde DuckDB/S3.
+      Note : id_pdc_itinerance peut être NULL/vide/"Non concerné" sur des
+      lignes réelles (~0,05% du fichier IRVE) -- pas de test not_null dessus,
+      cf. le repli sur id_pdc_local dans la clé de dédup.
+    columns:
+      - name: code_commune_origine
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['brut', 'cp_unique', 'cp_nom_trouve_dans_adresse', 'non_resolu_probable_hors_france']
+
+  - name: int_territorial_join
+    description: >
+      Jointure territoriale (port dbt de ve_pipeline/jointure/build_staging.py,
+      gardé en sauvegarde DuckDB/S3). Une ligne par commune vue dans au moins
+      une des 3 sources. zone_densite (ajouté le 2026-08-21, grille de
+      densité Insee) peut être NULL si une commune n'est pas retrouvée dans
+      le référentiel (ex. code commune fusionné/obsolète) -- pas de test
+      not_null dessus pour cette raison.
+    columns:
+      - name: code_commune
+        tests:
+          - not_null
+          - unique
+      - name: zone_densite
+        tests:
+          - accepted_values:
+              values: ['urbain', 'rural']

@@ -1,0 +1,50 @@
+version: 2
+
+models:
+  - name: mart_clustering_dataset
+    description: >
+      Dataset prêt pour le clustering K-Means (port dbt de
+      ve_pipeline/features/build_clustering_dataset.py, gardé en sauvegarde
+      DuckDB/S3). Plus aucun NULL attendu sur croissance_immat_ve_pct, les
+      colonnes Enedis, ni les 2 ratios de couverture (taux_couverture_afir,
+      ratio_pdc_par_100_ve) après imputation. zone_densite (grille de
+      densité Insee) n'est volontairement PAS repris comme colonne de
+      sortie : décision du 2026-08-21, il sert uniquement en interne à
+      normaliser ratio_pdc_par_100_ve (benchmark + médiane par zone) --
+      le garder en plus ferait doublon avec l'information déjà absorbée
+      dans le ratio.
+    columns:
+      - name: code_commune
+        tests:
+          - not_null
+          - unique
+      - name: nb_ve_stock_estime
+        tests:
+          - not_null
+      - name: taux_couverture_afir
+        tests:
+          - not_null
+      - name: ratio_pdc_par_100_ve
+        tests:
+          - not_null
+      - name: croissance_immat_ve_pct
+        tests:
+          - not_null
+      - name: nb_sites_residentiel
+        tests:
+          - not_null
+      - name: conso_totale_residentielle_mwh
+        tests:
+          - not_null
+      - name: conso_moyenne_residentielle_mwh
+        tests:
+          - not_null
+      - name: population
+        tests:
+          - not_null
+      - name: part_thermosensible
+        tests:
+          - not_null
+      - name: taux_chauffage_electrique
+        tests:
+          - not_null

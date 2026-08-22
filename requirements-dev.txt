@@ -1,0 +1,4 @@
+-r requirements.txt
+pytest>=8.0
+moto[s3]>=5.0
+responses>=0.25

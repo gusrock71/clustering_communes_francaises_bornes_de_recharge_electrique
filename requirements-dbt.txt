@@ -1,0 +1,11 @@
+# Dépendances dbt, séparées de requirements.txt (pas nécessaires pour
+# ve_pipeline lui-même, seulement pour lancer les modèles dbt/).
+#
+# Pas de version épinglée ici : dbt-core 1.7.13 (utilisé lors du
+# développement de dbt/, dans un environnement sandbox sans accès réseau à
+# github.com) plante sous Python 3.14 ("Metaclasses with custom tp_new are
+# not supported", incompatibilité protobuf/Python 3.14 côté dbt 1.7). Sur ta
+# machine (accès réseau normal), utilise la dernière version -- dbt-core
+# 1.10+ supporte officiellement Python 3.14.
+dbt-core
+dbt-postgres

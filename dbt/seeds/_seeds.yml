@@ -1,0 +1,20 @@
+version: 2
+
+seeds:
+  - name: ref_densite_communes
+    description: >
+      Grille de densité Insee (millésime 2026, géographie au 01/01/2026,
+      RP 2021) -- colonne DENS (3 postes) uniquement, regroupée en 2
+      valeurs (décision du 2026-08-21) : 'urbain' = Urbain dense + Urbain
+      intermédiaire, 'rural' = Rural. Source :
+      https://www.insee.fr/fr/information/8571524
+    columns:
+      - name: code_commune
+        tests:
+          - not_null
+          - unique
+      - name: zone_densite
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['urbain', 'rural']
