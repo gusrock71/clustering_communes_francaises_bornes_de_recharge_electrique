@@ -342,6 +342,78 @@ python -m ve_pipeline.clustering.gmm_explore
 Tests : `tests/test_dbscan_explore.py` (4 tests), `tests/test_gmm_explore.py`
 (4 tests). Suite complète du projet : 82 passed / 3 skipped.
 
+## API de service (FastAPI) + déploiement Cloud Run (2026-08-24)
+
+Étape suivante décidée le 2026-08-24 : rattacher le modèle K-Means k=4
+retenu à une future application Streamlit via une API. Stack choisie après
+comparaison (Render/Railway/Cloud Run) : **Cloud Run**, cohérent avec
+l'orientation GCP déjà envisagée pour ce projet.
+
+**`ve_pipeline/api/main.py`** -- API FastAPI en lecture seule. Rôle
+volontairement limité : elle sert les clusters déjà calculés et écrits par
+`kmeans_model.write_cluster_assignments` (table `ml__cluster_assignments`),
+sans jamais recharger le pipeline sklearn ni dépendre de MLflow en
+production -- le modèle reste un outil d'entraînement/traçabilité, la mise
+en service se fait sur le résultat déjà en base. Ce choix garde l'image
+Docker légère (ni boto3, ni duckdb, ni pyspark, ni mlflow --
+`requirements-api.txt` séparé de `requirements.txt`).
+
+Endpoints :
+- `GET /health`
+- `GET /communes/search?q=...` -- recherche par nom (sous-chaîne), code
+  postal ou code INSEE (match exact), jointure avec le seed dbt
+  `staging.ref_codes_postaux` (La Poste) pour le nom/code postal.
+- `GET /communes/{code_commune}` -- détail d'une commune (cluster +
+  features).
+
+**Limitation connue** : le référentiel La Poste ne liste pas Paris, Lyon,
+Marseille sous leur code INSEE agrégé (75056, 69123, 13055) mais
+arrondissement par arrondissement (ex. 75101...75120) -- une recherche par
+nom ne les retrouve donc pas, et `/communes/75056` renvoie le cluster avec
+`nom_commune`/`code_postal` à `null`. À enrichir plus tard (3 lignes à
+ajouter manuellement) si besoin pour la version Streamlit.
+
+Tests (`tests/test_api.py`, 7 tests, SQLite comme stand-in de Postgres, même
+convention que le reste du projet) : recherche par code/nom, doublons
+(commune à plusieurs codes postaux, ex. Paris/arrondissements), 404 sur
+commune/recherche introuvable. Suite complète : 89 passed / 3 skipped.
+
+**Déploiement Cloud Run** :
+- Projet GCP dédié : `ve-clustering-api` (région `europe-west9`, Paris).
+- `Dockerfile` (racine) : image `python:3.11-slim`, ne copie que
+  `requirements-api.txt` + `ve_pipeline/api/` -- build rapide, image légère.
+- `DATABASE_URL` stocké dans Secret Manager (secret `database-url`), jamais
+  en clair dans l'image/les logs/la commande de déploiement. Accès accordé
+  au compte de service Compute Engine par défaut du projet
+  (`<PROJECT_NUMBER>-compute@developer.gserviceaccount.com`, rôle "Secret
+  Manager Secret Accessor").
+- Déploiement direct depuis le code source local (pas besoin de Docker
+  installé en local, ni de GitHub) :
+```bash
+gcloud run deploy ve-clustering-api \
+  --source . \
+  --region europe-west9 \
+  --allow-unauthenticated \
+  --set-secrets=DATABASE_URL=database-url:latest
+```
+- `--allow-unauthenticated` : API publique sans authentification, nécessaire
+  pour l'appel depuis Streamlit (hébergé séparément) -- acceptable ici, les
+  données servies (clusters par commune) ne sont pas des données
+  personnelles sensibles.
+- Service déployé et testé en conditions réelles le 2026-08-24 :
+  `https://ve-clustering-api-164992414488.europe-west9.run.app` (`/health`,
+  `/communes/search`, `/communes/{code_commune}` tous vérifiés en production
+  contre les 32 101 communes réelles).
+- Free tier GCP largement suffisant pour ce projet (trafic quasi nul) :
+  Cloud Run (2M requêtes/mois), Secret Manager (10k accès/mois), Cloud Build
+  (120 min/jour), Artifact Registry (0,5 Go) -- seul point de vigilance à
+  moyen terme : nettoyer les anciennes images Artifact Registry si
+  redéploiements très fréquents.
+
+Prochaine étape : application Streamlit (recherche par
+nom/code postal/code INSEE + carte des clusters par semis de points
+géolocalisés, centroïdes à ajouter via `geo.api.gouv.fr` -- pas encore fait).
+
 ## Sauvegarde : ancien pipeline DuckDB/S3
 
 `ve_pipeline/jointure/`, `ve_pipeline/cleaning/`, `ve_pipeline/features/`
