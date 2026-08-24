@@ -1,4 +1,6 @@
 -r requirements.txt
+-r requirements-api.txt
 pytest>=8.0
 moto[s3]>=5.0
 responses>=0.25
+httpx>=0.27  # requis par fastapi.testclient.TestClient (tests/test_api.py)

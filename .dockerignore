@@ -1,0 +1,20 @@
+# Contexte de build Docker : uniquement requirements-api.txt et
+# ve_pipeline/api/ sont réellement copiés (voir Dockerfile), mais .dockerignore
+# évite quand même d'envoyer les gros fichiers/secrets au démon Docker.
+.git/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+mlruns/
+mlflow.db
+*.csv
+*.xlsx
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+docs/
+scripts/
+tests/
+.DS_Store

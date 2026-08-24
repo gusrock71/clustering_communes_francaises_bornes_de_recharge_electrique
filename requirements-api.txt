@@ -1,0 +1,12 @@
+# Dépendances de l'API de service (ve_pipeline/api/), utilisées pour
+# construire l'image Docker déployée sur Cloud Run. Volontairement séparées
+# de requirements.txt (ingestion/dbt/clustering) : l'API ne fait QUE lire des
+# tables déjà calculées (voir docstring de ve_pipeline/api/main.py), elle n'a
+# besoin ni de boto3/duckdb/pyspark (ingestion), ni de dbt, ni de
+# scikit-learn/mlflow (entraînement). Garder cette liste courte réduit le
+# temps de build et la taille de l'image Cloud Run.
+fastapi>=0.115
+uvicorn[standard]>=0.30
+sqlalchemy>=2.0
+psycopg2-binary>=2.9
+python-dotenv>=1.0
