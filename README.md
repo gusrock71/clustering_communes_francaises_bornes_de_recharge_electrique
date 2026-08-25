@@ -437,9 +437,38 @@ cd dbt && dbt seed --select ref_centroides_communes --profiles-dir .
 Résultat : 34 969 communes, 0 sans centre connu, aucun doublon, codes Corse
 (2A/2B) préservés.
 
-Prochaine étape : application Streamlit (recherche par nom/code
-postal/code INSEE via `/communes/search`, carte des clusters par semis de
-points géolocalisés via `/communes/map`).
+## Application Streamlit (2026-08-25)
+
+`streamlit_app/app.py` -- front-end de restitution, séparé de l'API comme
+convenu (2026-08-24) : n'accède JAMAIS directement à Postgres/Neon, appelle
+uniquement l'API HTTP (`API_BASE_URL`, par défaut le service Cloud Run
+déployé). Deux fonctionnalités :
+- recherche par nom, code postal ou code INSEE (`GET /communes/search`),
+  affichage du cluster et des features clés par commune ;
+- carte de l'ensemble des communes (`GET /communes/map`, pydeck
+  `ScatterplotLayer`), un point coloré par cluster (4 couleurs fixes, k=4)
+  pour repérer visuellement les grands ensembles (déserts IRVE, zones à
+  risque réseau).
+
+`render_app()` isole toute la construction de l'UI dans une fonction
+appelée uniquement sous `if __name__ == "__main__"` -- Streamlit exécute
+justement le script cible avec `__name__ == "__main__"`
+(`streamlit run app.py`), donc ce garde-fou ne change rien à l'usage normal
+mais rend `search_communes`/`CLUSTER_COLORS` testables sans dépendre d'un
+contexte Streamlit actif.
+
+```bash
+pip install -r requirements-streamlit.txt
+streamlit run streamlit_app/app.py
+```
+
+Tests (`tests/test_streamlit_app.py`, 5 tests, `responses` pour mocker
+l'API) : recherche réussie, 404 traité comme "aucun résultat" (pas une
+erreur), erreur serveur, erreur réseau, couverture des 4 clusters dans la
+légende. Suite complète du projet : 96 passed / 3 skipped.
+
+Prochaine étape : déploiement sur Streamlit Community Cloud (gratuit,
+connexion directe au repo GitHub).
 
 ## Sauvegarde : ancien pipeline DuckDB/S3
 
