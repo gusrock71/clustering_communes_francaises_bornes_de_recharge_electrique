@@ -41,6 +41,21 @@ CLUSTER_ROWS = [
         "mlflow_run_id": "test-run",
         "trained_at": "2026-08-22T00:00:00+00:00",
     },
+    {
+        # Commune sans centroïde connu (absente de CENTROIDS_ROWS) -- sert à
+        # vérifier que /communes/map l'exclut plutôt que de renvoyer des
+        # coordonnées nulles.
+        "code_commune": "88888",
+        "part_thermosensible": 0.20,
+        "taux_chauffage_electrique": 0.15,
+        "croissance_immat_ve_pct": 0.30,
+        "demarrage_ve_tardif": 1,
+        "taux_couverture_afir": 0.5,
+        "ratio_pdc_par_100_ve": 0.6,
+        "cluster_id": 1,
+        "mlflow_run_id": "test-run",
+        "trained_at": "2026-08-22T00:00:00+00:00",
+    },
 ]
 
 COMMUNES_ROWS = [
@@ -69,6 +84,14 @@ COMMUNES_ROWS = [
     },
 ]
 
+CENTROIDS_ROWS = [
+    {"code_commune": "01001", "latitude": 46.1517, "longitude": 4.9306},
+    {"code_commune": "75056", "latitude": 48.8566, "longitude": 2.3522},
+    # 88888 volontairement absent : sert à vérifier qu'une commune sans
+    # centroïde connu est exclue de /communes/map plutôt que renvoyée avec
+    # des coordonnées nulles.
+]
+
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
@@ -76,9 +99,11 @@ def client(tmp_path, monkeypatch):
     engine = create_engine(dsn)
     pd.DataFrame(CLUSTER_ROWS).to_sql("ml__cluster_assignments", engine, index=False)
     pd.DataFrame(COMMUNES_ROWS).to_sql("ref_codes_postaux", engine, index=False)
+    pd.DataFrame(CENTROIDS_ROWS).to_sql("ref_centroides_communes", engine, index=False)
 
     monkeypatch.setenv("DATABASE_URL", dsn)
     monkeypatch.setenv("COMMUNES_REF_TABLE", "ref_codes_postaux")
+    monkeypatch.setenv("CENTROIDS_TABLE", "ref_centroides_communes")
     api_main.reset_db_engine()
 
     with TestClient(api_main.app) as test_client:
@@ -136,3 +161,24 @@ def test_search_by_name_is_case_insensitive_and_partial(client):
 def test_search_with_no_match_returns_404(client):
     response = client.get("/communes/search", params={"q": "INTROUVABLE"})
     assert response.status_code == 404
+
+
+def test_map_returns_one_point_per_commune_with_known_centroid(client):
+    response = client.get("/communes/map")
+    assert response.status_code == 200
+    results = response.json()
+    # 3 communes dans ml__cluster_assignments (01001, 75056, 88888), mais
+    # seules 01001 et 75056 ont un centroïde connu -- 88888 doit être exclue.
+    assert {r["code_commune"] for r in results} == {"01001", "75056"}
+
+
+def test_map_point_has_correct_coordinates_and_cluster(client):
+    response = client.get("/communes/map")
+    by_code = {r["code_commune"]: r for r in response.json()}
+
+    assert by_code["01001"]["latitude"] == 46.1517
+    assert by_code["01001"]["longitude"] == 4.9306
+    assert by_code["01001"]["cluster_id"] == 2
+    # Paris a 2 codes postaux dans le référentiel : /communes/map ne doit
+    # renvoyer qu'une seule ligne pour 75056, pas une par code postal.
+    assert by_code["75056"]["nom_commune"] == "PARIS"

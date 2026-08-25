@@ -7,9 +7,11 @@ dbt/target/
 dbt/logs/
 dbt/dbt_packages/
 dbt/.user.yml
+logs/
 mlruns/
 mlflow.db
 .DS_Store
+dbt/seeds/_tmp/
 
 # Données brutes volumineuses (source : S3, cf. ve_pipeline/ingestion) --
 # ne doivent jamais être versionnées (poids, secret de source, dépasse la

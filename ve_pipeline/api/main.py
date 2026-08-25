@@ -11,17 +11,21 @@ direct. Ce choix garde l'image Docker légère (ni boto3, ni duckdb, ni
 pyspark, ni mlflow -- voir requirements-api.txt) et évite de dépendre d'un
 serveur MLflow toujours actif en production.
 
-Deux tables lues, toutes deux sur la même base Postgres/Neon que le reste du
+Trois tables lues, toutes sur la même base Postgres/Neon que le reste du
 pipeline :
   - `ml__cluster_assignments` (résultat du clustering) ;
   - `staging.ref_codes_postaux` (seed dbt La Poste : nom de commune, code
     postal), jointe sur `code_commune` pour permettre une recherche par nom
-    ou code postal, pas seulement par code INSEE.
+    ou code postal, pas seulement par code INSEE ;
+  - `staging.ref_centroides_communes` (seed dbt, source geo.api.gouv.fr,
+    ajouté le 2026-08-25) : latitude/longitude par commune, utilisées par
+    `/communes/map` pour la future carte Streamlit.
 
-Les noms de ces deux tables sont surchageables par variable d'environnement
-(`CLUSTER_TABLE`, `COMMUNES_REF_TABLE`) -- utile pour les tests, qui tournent
-sur SQLite (pas de schéma séparé, donc `ref_codes_postaux` sans préfixe
-`staging.`, cf. tests/test_api.py) plutôt que sur Postgres.
+Les noms de ces tables sont surchargeables par variable d'environnement
+(`CLUSTER_TABLE`, `COMMUNES_REF_TABLE`, `CENTROIDS_TABLE`) -- utile pour les
+tests, qui tournent sur SQLite (pas de schéma séparé, donc les tables sont
+référencées sans préfixe `staging.`, cf. tests/test_api.py) plutôt que sur
+Postgres.
 """
 
 from __future__ import annotations
@@ -40,6 +44,7 @@ load_dotenv()
 
 DEFAULT_CLUSTER_TABLE = "ml__cluster_assignments"
 DEFAULT_COMMUNES_REF_TABLE = "staging.ref_codes_postaux"
+DEFAULT_CENTROIDS_TABLE = "staging.ref_centroides_communes"
 
 
 def _cluster_table() -> str:
@@ -48,6 +53,10 @@ def _cluster_table() -> str:
 
 def _communes_ref_table() -> str:
     return os.environ.get("COMMUNES_REF_TABLE", DEFAULT_COMMUNES_REF_TABLE)
+
+
+def _centroids_table() -> str:
+    return os.environ.get("CENTROIDS_TABLE", DEFAULT_CENTROIDS_TABLE)
 
 
 # Code INSEE commune : 5 chiffres, ou 2A/2B pour la Corse (ex: "2A004").
@@ -87,6 +96,14 @@ def reset_db_engine() -> None:
     tests pour changer de DATABASE_URL entre deux cas de test."""
     global _engine
     _engine = None
+
+
+class CommuneMapPoint(BaseModel):
+    code_commune: str
+    nom_commune: str | None = None
+    cluster_id: int
+    latitude: float
+    longitude: float
 
 
 class CommuneCluster(BaseModel):
@@ -201,6 +218,42 @@ def search_communes(
     if not rows:
         raise HTTPException(status_code=404, detail=f"Aucune commune trouvée pour '{q}'")
     return [_row_to_model(r) for r in rows]
+
+
+@app.get("/communes/map", response_model=list[CommuneMapPoint])
+def get_communes_map() -> list[CommuneMapPoint]:
+    """Jeu complet (une ligne par commune) pour la carte Streamlit : code,
+    nom, cluster et coordonnées. Les communes sans centroïde connu (aucune
+    normalement, cf. ref_centroides_communes -- 0 commune sans centre sur
+    34 969 lors de la génération du seed le 2026-08-25) sont exclues plutôt
+    que renvoyées avec des coordonnées nulles, pour ne jamais avoir à gérer
+    un point non plaçable côté carte."""
+    engine = get_db_engine()
+    query = text(f"""
+        SELECT
+            c.code_commune,
+            MIN(p.nom_de_la_commune) AS nom_commune,
+            c.cluster_id,
+            ctr.latitude,
+            ctr.longitude
+        FROM {_cluster_table()} c
+        LEFT JOIN {_communes_ref_table()} p ON p.code_commune_insee = c.code_commune
+        LEFT JOIN {_centroids_table()} ctr ON ctr.code_commune = c.code_commune
+        WHERE ctr.latitude IS NOT NULL AND ctr.longitude IS NOT NULL
+        GROUP BY c.code_commune, c.cluster_id, ctr.latitude, ctr.longitude
+    """)
+    with engine.connect() as conn:
+        rows = conn.execute(query).fetchall()
+    return [
+        CommuneMapPoint(
+            code_commune=r.code_commune,
+            nom_commune=r.nom_commune,
+            cluster_id=int(r.cluster_id),
+            latitude=float(r.latitude),
+            longitude=float(r.longitude),
+        )
+        for r in rows
+    ]
 
 
 @app.get("/communes/{code_commune}", response_model=CommuneCluster)

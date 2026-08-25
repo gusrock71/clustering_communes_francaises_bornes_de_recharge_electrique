@@ -18,3 +18,25 @@ seeds:
           - not_null
           - accepted_values:
               values: ['urbain', 'rural']
+
+  - name: ref_centroides_communes
+    description: >
+      Centroïde (latitude/longitude) de chaque commune française, source
+      API publique geo.api.gouv.fr (2026-08-25). Récupéré via un script
+      ponctuel (fetch_centroides.py, à la racine du projet) exécuté en
+      local plutôt que par le pipeline lui-même -- un seul appel HTTP
+      normal suffit depuis une machine standard (pas de contrainte de
+      taille de réponse comme dans l'environnement d'assistance utilisé
+      pour construire ce projet). Sert à la future carte des clusters
+      (application Streamlit, pas encore développée).
+    columns:
+      - name: code_commune
+        tests:
+          - not_null
+          - unique
+      - name: latitude
+        tests:
+          - not_null
+      - name: longitude
+        tests:
+          - not_null

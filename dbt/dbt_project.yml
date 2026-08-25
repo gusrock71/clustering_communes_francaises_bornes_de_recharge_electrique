@@ -89,3 +89,12 @@ seeds:
       +delimiter: ";"
       +column_types:
         code_commune: varchar(10)
+    ref_centroides_communes:
+      +schema: staging
+      # Source geo.api.gouv.fr (2026-08-25, cf. fetch_centroides.py à la
+      # racine du projet). code_commune forcé en texte pour ne pas perdre
+      # les zéros en tête ni casser les codes Corse (2A/2B) -- même
+      # précaution que les autres seeds (ref_codes_postaux, ref_densite_communes).
+      +delimiter: ";"
+      +column_types:
+        code_commune: varchar(10)
