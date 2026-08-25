@@ -363,6 +363,10 @@ Endpoints :
 - `GET /communes/search?q=...` -- recherche par nom (sous-chaîne), code
   postal ou code INSEE (match exact), jointure avec le seed dbt
   `staging.ref_codes_postaux` (La Poste) pour le nom/code postal.
+- `GET /communes/map` -- jeu complet (une ligne par commune : code, nom,
+  cluster, latitude, longitude), pensé pour alimenter la carte Streamlit.
+  Jointure supplémentaire avec le seed `staging.ref_centroides_communes`
+  (voir section dédiée ci-dessous) ; communes sans centroïde connu exclues.
 - `GET /communes/{code_commune}` -- détail d'une commune (cluster +
   features).
 
@@ -410,9 +414,32 @@ gcloud run deploy ve-clustering-api \
   moyen terme : nettoyer les anciennes images Artifact Registry si
   redéploiements très fréquents.
 
-Prochaine étape : application Streamlit (recherche par
-nom/code postal/code INSEE + carte des clusters par semis de points
-géolocalisés, centroïdes à ajouter via `geo.api.gouv.fr` -- pas encore fait).
+## Référentiel centroïdes communes (2026-08-25)
+
+Nouveau seed dbt `ref_centroides_communes` (`code_commune;latitude;longitude`,
+schéma `staging`) : coordonnées de 34 969 communes, source `geo.api.gouv.fr`.
+
+**Contrainte rencontrée** : l'outil de récupération web disponible dans
+l'environnement d'assistance est plafonné à ~80 Ko par requête HTTP (constaté
+en JSON comme en CSV) -- trop peu pour les ~35 000 communes en un seul appel.
+Un découpage département par département (~100 requêtes) fonctionne mais
+consomme trop de ressources conversationnelles pour être fait depuis cet
+environnement. Solution retenue : script ponctuel `fetch_centroides.py`
+(racine du projet, dépendances stdlib uniquement), exécuté directement sur la
+machine de l'utilisateur -- un seul appel HTTP normal y suffit, sans la
+limite de taille rencontrée côté outil d'assistance.
+
+```bash
+python3 fetch_centroides.py   # écrit dbt/seeds/ref_centroides_communes.csv
+cd dbt && dbt seed --select ref_centroides_communes --profiles-dir .
+```
+
+Résultat : 34 969 communes, 0 sans centre connu, aucun doublon, codes Corse
+(2A/2B) préservés.
+
+Prochaine étape : application Streamlit (recherche par nom/code
+postal/code INSEE via `/communes/search`, carte des clusters par semis de
+points géolocalisés via `/communes/map`).
 
 ## Sauvegarde : ancien pipeline DuckDB/S3
 

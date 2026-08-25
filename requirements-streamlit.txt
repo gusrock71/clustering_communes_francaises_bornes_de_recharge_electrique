@@ -1,0 +1,10 @@
+# Dépendances de l'application Streamlit (streamlit_app/), séparées de
+# requirements.txt/requirements-api.txt -- même logique que pour l'API :
+# ce front-end n'appelle QUE l'API HTTP (jamais Postgres/Neon directement,
+# cf. streamlit_app/app.py), il n'a donc besoin ni de sqlalchemy/psycopg2,
+# ni d'aucune des dépendances du pipeline d'ingestion/entraînement.
+streamlit>=1.38
+pydeck>=0.9
+requests>=2.31
+pandas>=2.0,<3.0
+python-dotenv>=1.0
