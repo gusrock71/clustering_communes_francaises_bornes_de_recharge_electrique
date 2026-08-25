@@ -363,10 +363,17 @@ Endpoints :
 - `GET /communes/search?q=...` -- recherche par nom (sous-chaîne), code
   postal ou code INSEE (match exact), jointure avec le seed dbt
   `staging.ref_codes_postaux` (La Poste) pour le nom/code postal.
-- `GET /communes/map` -- jeu complet (une ligne par commune : code, nom,
-  cluster, latitude, longitude), pensé pour alimenter la carte Streamlit.
-  Jointure supplémentaire avec le seed `staging.ref_centroides_communes`
-  (voir section dédiée ci-dessous) ; communes sans centroïde connu exclues.
+- `GET /communes/map` -- jeu complet (une ligne par commune AVEC centroïde
+  connu : code, nom, cluster, latitude, longitude), pensé pour alimenter la
+  carte Streamlit. Part de `staging.ref_centroides_communes` (univers quasi
+  complet, 34 969 communes) avec jointure optionnelle vers
+  `ml__cluster_assignments` : les communes exclues du clustering faute de
+  données immatriculations/Enedis suffisantes (~2 870 sur 34 969, filtre
+  `has_immatriculations`/`has_enedis` de `mart_clustering_dataset.sql`)
+  apparaissent quand même, avec `cluster_id = null` -- décision du
+  2026-08-25 après constat de zones blanches inexpliquées sur la première
+  version de la carte (voir section Streamlit ci-dessous). Seules les
+  communes sans centroïde connu (aucune à ce jour) restent exclues.
 - `GET /communes/{code_commune}` -- détail d'une commune (cluster +
   features).
 
@@ -377,10 +384,12 @@ nom ne les retrouve donc pas, et `/communes/75056` renvoie le cluster avec
 `nom_commune`/`code_postal` à `null`. À enrichir plus tard (3 lignes à
 ajouter manuellement) si besoin pour la version Streamlit.
 
-Tests (`tests/test_api.py`, 7 tests, SQLite comme stand-in de Postgres, même
+Tests (`tests/test_api.py`, 11 tests, SQLite comme stand-in de Postgres, même
 convention que le reste du projet) : recherche par code/nom, doublons
 (commune à plusieurs codes postaux, ex. Paris/arrondissements), 404 sur
-commune/recherche introuvable. Suite complète : 89 passed / 3 skipped.
+commune/recherche introuvable, `/communes/map` avec commune non clusterisée
+(`cluster_id = null`) et commune sans centroïde connu (exclue). Suite
+complète : 99 passed / 3 skipped.
 
 **Déploiement Cloud Run** :
 - Projet GCP dédié : `ve-clustering-api` (région `europe-west9`, Paris).
@@ -450,6 +459,18 @@ déployé). Deux fonctionnalités :
   pour repérer visuellement les grands ensembles (déserts IRVE, zones à
   risque réseau).
 
+**Communes "données insuffisantes" (2026-08-25)** : la première version de
+la carte affichait des zones blanches inexpliquées (32 101 communes
+affichées sur 34 969 avec centroïde connu). Cause : `/communes/map`
+n'incluait que les communes déjà présentes dans `ml__cluster_assignments`,
+excluant silencieusement celles écartées du clustering faute de données
+immatriculations/Enedis (~2 870 communes). Corrigé en modifiant l'endpoint
+pour renvoyer `cluster_id = null` sur ces communes plutôt que de les omettre
+(voir section API ci-dessus) ; côté Streamlit, `load_map_data()` colore ces
+points en gris clair (`INSUFFICIENT_DATA_COLOR`, distinct du gris de
+garde-fou `DEFAULT_COLOR`) avec une entrée de légende dédiée "Données
+insuffisantes" et un libellé de tooltip adapté (`cluster_label`).
+
 `render_app()` isole toute la construction de l'UI dans une fonction
 appelée uniquement sous `if __name__ == "__main__"` -- Streamlit exécute
 justement le script cible avec `__name__ == "__main__"`
@@ -462,10 +483,11 @@ pip install -r requirements-streamlit.txt
 streamlit run streamlit_app/app.py
 ```
 
-Tests (`tests/test_streamlit_app.py`, 5 tests, `responses` pour mocker
+Tests (`tests/test_streamlit_app.py`, 6 tests, `responses` pour mocker
 l'API) : recherche réussie, 404 traité comme "aucun résultat" (pas une
 erreur), erreur serveur, erreur réseau, couverture des 4 clusters dans la
-légende. Suite complète du projet : 96 passed / 3 skipped.
+légende, coloration grise "données insuffisantes" pour `cluster_id = null`.
+Suite complète du projet : 99 passed / 3 skipped.
 
 Prochaine étape : déploiement sur Streamlit Community Cloud (gratuit,
 connexion directe au repo GitHub).

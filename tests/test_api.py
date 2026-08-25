@@ -88,8 +88,17 @@ CENTROIDS_ROWS = [
     {"code_commune": "01001", "latitude": 46.1517, "longitude": 4.9306},
     {"code_commune": "75056", "latitude": 48.8566, "longitude": 2.3522},
     # 88888 volontairement absent : sert à vérifier qu'une commune sans
-    # centroïde connu est exclue de /communes/map plutôt que renvoyée avec
-    # des coordonnées nulles.
+    # centroïde connu est exclue de /communes/map (aucun point non plaçable).
+    {
+        # Centroïde connu mais AUCUNE ligne dans CLUSTER_ROWS -- simule les
+        # ~2 870 communes exclues de mart_clustering_dataset.sql (filtre
+        # has_immatriculations/has_enedis, cf. main.py) : doit apparaître
+        # dans /communes/map avec cluster_id = null ("données insuffisantes"),
+        # pas être silencieusement omise.
+        "code_commune": "12345",
+        "latitude": 43.5,
+        "longitude": 5.5,
+    },
 ]
 
 
@@ -167,9 +176,10 @@ def test_map_returns_one_point_per_commune_with_known_centroid(client):
     response = client.get("/communes/map")
     assert response.status_code == 200
     results = response.json()
-    # 3 communes dans ml__cluster_assignments (01001, 75056, 88888), mais
-    # seules 01001 et 75056 ont un centroïde connu -- 88888 doit être exclue.
-    assert {r["code_commune"] for r in results} == {"01001", "75056"}
+    # 3 communes ont un centroïde connu (01001, 75056, 12345) -- 88888 n'en a
+    # pas et doit rester exclue. 12345 n'a pas de cluster assigné mais a un
+    # centroïde connu : elle doit être présente (cf. test dédié ci-dessous).
+    assert {r["code_commune"] for r in results} == {"01001", "75056", "12345"}
 
 
 def test_map_point_has_correct_coordinates_and_cluster(client):
@@ -182,3 +192,24 @@ def test_map_point_has_correct_coordinates_and_cluster(client):
     # Paris a 2 codes postaux dans le référentiel : /communes/map ne doit
     # renvoyer qu'une seule ligne pour 75056, pas une par code postal.
     assert by_code["75056"]["nom_commune"] == "PARIS"
+
+
+def test_map_includes_commune_with_centroid_but_no_cluster_as_null(client):
+    # 12345 : centroïde connu, absente de ml__cluster_assignments (cf.
+    # CENTROIDS_ROWS) -- doit apparaître avec cluster_id = null plutôt que
+    # d'être omise ("données insuffisantes" côté Streamlit).
+    response = client.get("/communes/map")
+    by_code = {r["code_commune"]: r for r in response.json()}
+
+    assert by_code["12345"]["cluster_id"] is None
+    assert by_code["12345"]["latitude"] == 43.5
+    assert by_code["12345"]["longitude"] == 5.5
+
+
+def test_map_excludes_commune_without_any_known_centroid(client):
+    # 88888 : présente dans ml__cluster_assignments mais absente de
+    # ref_centroides_communes -- ne peut pas être placée sur la carte, doit
+    # rester exclue (comportement inchangé par le passage à cluster_id null).
+    response = client.get("/communes/map")
+    codes = {r["code_commune"] for r in response.json()}
+    assert "88888" not in codes

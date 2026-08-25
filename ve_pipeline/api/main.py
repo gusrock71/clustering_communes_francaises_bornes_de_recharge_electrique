@@ -101,7 +101,7 @@ def reset_db_engine() -> None:
 class CommuneMapPoint(BaseModel):
     code_commune: str
     nom_commune: str | None = None
-    cluster_id: int
+    cluster_id: int | None = None
     latitude: float
     longitude: float
 
@@ -222,25 +222,30 @@ def search_communes(
 
 @app.get("/communes/map", response_model=list[CommuneMapPoint])
 def get_communes_map() -> list[CommuneMapPoint]:
-    """Jeu complet (une ligne par commune) pour la carte Streamlit : code,
-    nom, cluster et coordonnées. Les communes sans centroïde connu (aucune
-    normalement, cf. ref_centroides_communes -- 0 commune sans centre sur
-    34 969 lors de la génération du seed le 2026-08-25) sont exclues plutôt
-    que renvoyées avec des coordonnées nulles, pour ne jamais avoir à gérer
-    un point non plaçable côté carte."""
+    """Jeu complet (une ligne par commune AVEC centroïde connu) pour la
+    carte Streamlit : code, nom, cluster et coordonnées.
+
+    Part de `ref_centroides_communes` (univers quasi complet des communes
+    françaises, 34 969) plutôt que de `ml__cluster_assignments` (32 101 --
+    voir `mart_clustering_dataset.sql`, filtre `has_immatriculations = true
+    AND has_enedis = true`) : les ~2 870 communes qui manquent de données
+    Enedis ou immatriculations suffisantes n'ont jamais été clusterisées,
+    mais doivent quand même apparaître sur la carte (`cluster_id = null`)
+    plutôt que de créer des trous silencieux -- constat fait le 2026-08-25
+    en visualisant la première version de cette carte (zones blanches
+    inexpliquées sans cette distinction)."""
     engine = get_db_engine()
     query = text(f"""
         SELECT
-            c.code_commune,
+            ctr.code_commune,
             MIN(p.nom_de_la_commune) AS nom_commune,
             c.cluster_id,
             ctr.latitude,
             ctr.longitude
-        FROM {_cluster_table()} c
-        LEFT JOIN {_communes_ref_table()} p ON p.code_commune_insee = c.code_commune
-        LEFT JOIN {_centroids_table()} ctr ON ctr.code_commune = c.code_commune
-        WHERE ctr.latitude IS NOT NULL AND ctr.longitude IS NOT NULL
-        GROUP BY c.code_commune, c.cluster_id, ctr.latitude, ctr.longitude
+        FROM {_centroids_table()} ctr
+        LEFT JOIN {_cluster_table()} c ON c.code_commune = ctr.code_commune
+        LEFT JOIN {_communes_ref_table()} p ON p.code_commune_insee = ctr.code_commune
+        GROUP BY ctr.code_commune, c.cluster_id, ctr.latitude, ctr.longitude
     """)
     with engine.connect() as conn:
         rows = conn.execute(query).fetchall()
@@ -248,7 +253,7 @@ def get_communes_map() -> list[CommuneMapPoint]:
         CommuneMapPoint(
             code_commune=r.code_commune,
             nom_commune=r.nom_commune,
-            cluster_id=int(r.cluster_id),
+            cluster_id=int(r.cluster_id) if r.cluster_id is not None else None,
             latitude=float(r.latitude),
             longitude=float(r.longitude),
         )

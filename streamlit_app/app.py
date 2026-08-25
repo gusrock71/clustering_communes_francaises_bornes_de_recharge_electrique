@@ -44,6 +44,10 @@ CLUSTER_COLORS: dict[int, list[int]] = {
     3: [214, 39, 40],    # rouge
 }
 DEFAULT_COLOR = [128, 128, 128]  # gris -- cluster_id imprévu (garde-fou)
+# Gris plus clair que DEFAULT_COLOR pour rester visuellement distinct du
+# garde-fou ci-dessus : ce cas est attendu (communes non clusterisées faute
+# de données), pas une anomalie.
+INSUFFICIENT_DATA_COLOR = [190, 190, 190]
 
 FEATURE_LABELS: dict[str, str] = {
     "part_thermosensible": "Part thermosensible (%)",
@@ -58,11 +62,28 @@ FEATURE_LABELS: dict[str, str] = {
 def load_map_data() -> pd.DataFrame:
     """Charge le jeu complet pour la carte. Mis en cache 1h (le clustering
     n'est réentraîné qu'occasionnellement, pas de raison d'appeler l'API à
-    chaque interaction utilisateur)."""
+    chaque interaction utilisateur).
+
+    `cluster_id` peut être `null` (communes avec centroïde connu mais
+    exclues du clustering faute de données immatriculations/Enedis
+    suffisantes, cf. docstring de `/communes/map` -- ~2 870 communes sur
+    34 969, décision du 2026-08-25). Ces communes sont affichées en gris
+    ("données insuffisantes") plutôt qu'omises, pour distinguer une vraie
+    absence de commune d'une commune non clusterisée. JSON `null` devient
+    `None` via `response.json()`, mais pandas le convertit en `NaN` une fois
+    dans une colonne -- `pd.isna(c)` couvre les deux cas, `.get(c, ...)` seul
+    ne suffirait pas car `NaN` n'est jamais égal à une clé de dict."""
     response = requests.get(f"{API_BASE_URL}/communes/map", timeout=60)
     response.raise_for_status()
     df = pd.DataFrame(response.json())
-    df["color"] = df["cluster_id"].map(lambda c: CLUSTER_COLORS.get(c, DEFAULT_COLOR))
+    df["color"] = df["cluster_id"].map(
+        lambda c: INSUFFICIENT_DATA_COLOR if pd.isna(c) else CLUSTER_COLORS.get(int(c), DEFAULT_COLOR)
+    )
+    # Libellé texte pour le tooltip pydeck : "Cluster {None}" serait affiché
+    # tel quel côté JS, d'où ce libellé explicite pour le cas gris.
+    df["cluster_label"] = df["cluster_id"].map(
+        lambda c: "Données insuffisantes" if pd.isna(c) else f"Cluster {int(c)}"
+    )
     return df
 
 
@@ -154,7 +175,7 @@ def render_app() -> None:
         "ensembles de même couleur signalent des zones homogènes (ex. déserts IRVE)."
     )
 
-    legend_cols = st.columns(len(CLUSTER_COLORS))
+    legend_cols = st.columns(len(CLUSTER_COLORS) + 1)
     for cluster_id, color in CLUSTER_COLORS.items():
         with legend_cols[cluster_id]:
             st.markdown(
@@ -163,6 +184,14 @@ def render_app() -> None:
                 f"Cluster {cluster_id}</div>",
                 unsafe_allow_html=True,
             )
+    with legend_cols[len(CLUSTER_COLORS)]:
+        c = INSUFFICIENT_DATA_COLOR
+        st.markdown(
+            f"<div style='background-color: rgb({c[0]},{c[1]},{c[2]}); "
+            f"color: white; padding: 4px; border-radius: 4px; text-align: center;'>"
+            f"Données insuffisantes</div>",
+            unsafe_allow_html=True,
+        )
 
     try:
         map_df = load_map_data()
@@ -184,7 +213,7 @@ def render_app() -> None:
             pdk.Deck(
                 layers=[layer],
                 initial_view_state=view_state,
-                tooltip={"text": "{nom_commune}\nCluster {cluster_id}"},
+                tooltip={"text": "{nom_commune}\n{cluster_label}"},
                 map_style=None,
             )
         )
