@@ -6,13 +6,17 @@ fonctionnement.
 
 ## Sources
 
-| Source | Description | Producteur |
-|---|---|---|
-| `irve` | Base nationale consolidée des IRVE (bornes de recharge) | data.gouv.fr / transport.data.gouv.fr |
-| `immatriculations` | Immatriculations de véhicules routiers par commune, par motorisation (2010-2025) — scindé en 2 fichiers SDES : `immatriculations_neuf` (achats neufs) et `immatriculations_occasion` (achats d'occasion, avec vignette Crit'Air) | SDES / data.gouv.fr |
-| `enedis_conso` | Consommation et thermosensibilité électriques annuelles par commune, **limité à l'année 2024** | Enedis Open Data (portail data-fair) |
+| Source | Description | Producteur | Périodicité de mise à jour |
+|---|---|---|---|
+| `irve` | Base nationale consolidée des IRVE (bornes de recharge) | data.gouv.fr / transport.data.gouv.fr | **Quotidienne** (nouvelle consolidation chaque jour, confirmé le 2026-08-26 via l'historique des ressources) |
+| `immatriculations` | Immatriculations de véhicules routiers par commune, par motorisation (2010-2025) — scindé en 2 fichiers SDES : `immatriculations_neuf` (achats neufs) et `immatriculations_occasion` (achats d'occasion, avec vignette Crit'Air) | SDES / data.gouv.fr | **Annuelle** (2 fichiers CSV mis à jour le 11/02/2026, confirmé le 2026-08-26) |
+| `enedis_conso` | Consommation et thermosensibilité électriques annuelles par commune, **limité à l'année 2024** | Enedis Open Data (portail data-fair) | **Annuelle** (fréquence indiquée explicitement sur la fiche du dataset ; couverture 2011-2024, données publiées début 2025) |
 
 URLs exactes et colonnes de garde-fou (`schema_hint`) : voir `ve_pipeline/ingestion/config.py`.
+
+**Périodicité et implications pour l'automatisation (vérifié le 2026-08-26)** : l'IRVE est la seule source à évoluer quotidiennement, les 3 autres fichiers (immatriculations neuf/occasion, Enedis) ne changent qu'une fois par an. Un run mensuel ou trimestriel du connecteur d'ingestion suffit donc largement pour rester à jour sur l'ensemble des 4 sources -- pas besoin d'un rythme quotidien côté pipeline, même pour l'IRVE (les besoins de ce MVP portent sur des tendances de fond, pas sur du temps réel).
+
+**Point de vigilance** : le filtre Enedis est figé sur `qs=annee:2024` dans `ve_pipeline/ingestion/config.py` (voir section dédiée ci-dessous). Une source annuelle publie généralement sa nouvelle année plusieurs mois après la clôture de l'année de référence (l'édition 2024 a été mise en ligne début 2025) -- il faudra donc mettre à jour ce filtre manuellement (pas de détection automatique de fraîcheur pour l'instant) une fois l'édition 2025 disponible sur le portail Enedis.
 
 ### Cas particulier Enedis : source paginée
 
