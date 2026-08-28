@@ -49,6 +49,32 @@ DEFAULT_COLOR = [128, 128, 128]  # gris -- cluster_id imprévu (garde-fou)
 # de données), pas une anomalie.
 INSUFFICIENT_DATA_COLOR = [190, 190, 190]
 
+# Phrase d'interprétation par cluster (cf. tableau "Les 4 profils obtenus",
+# k=4 modèle retenu, documenté sur Notion le 2026-08-27) -- source unique
+# utilisée à la fois dans le cartouche de résultat de recherche (colorée
+# comme le badge du cluster) et sous la légende de la carte, pour ne jamais
+# désynchroniser les deux formulations.
+CLUSTER_DESCRIPTIONS: dict[int, str] = {
+    0: (
+        "Communes sous-équipées en bornes de recharge VE, croissance avérée en "
+        "immatriculations de VE, risques de tensions électriques si installations "
+        "de bornes VE (notamment pics hivernaux)."
+    ),
+    1: (
+        "Communes sous-équipées en bornes de recharge VE, croissance avérée en "
+        "immatriculations de VE, risques de tensions électriques modérés."
+    ),
+    2: (
+        "Communes sous-équipées en bornes de recharge VE, croissance modérée en "
+        "immatriculations de VE, risques de tensions électriques modérés."
+    ),
+    3: (
+        "Communes bien équipées en bornes de recharge VE, croissance avérée en "
+        "immatriculations de VE, risques de tensions électriques si installations "
+        "de bornes VE (notamment pics hivernaux)."
+    ),
+}
+
 FEATURE_LABELS: dict[str, str] = {
     "part_thermosensible": "Part thermosensible (%)",
     "taux_chauffage_electrique": "Taux de chauffage électrique (%)",
@@ -110,14 +136,22 @@ def render_commune_card(commune: dict) -> None:
     nom = commune.get("nom_commune") or "(nom inconnu)"
     code_postal = commune.get("code_postal") or "?"
     cluster_id = commune["cluster_id"]
+    color = CLUSTER_COLORS.get(cluster_id, DEFAULT_COLOR)
 
     with st.container(border=True):
         col_title, col_cluster = st.columns([3, 1])
         with col_title:
             st.subheader(f"{nom} ({code_postal})")
             st.caption(f"Code INSEE : {commune['code_commune']}")
+            description = CLUSTER_DESCRIPTIONS.get(cluster_id)
+            if description:
+                st.markdown(
+                    f"<p style='color: rgb({color[0]},{color[1]},{color[2]}); "
+                    f"font-weight: 600; font-size: 0.9em; margin: 4px 0 0;'>"
+                    f"{description}</p>",
+                    unsafe_allow_html=True,
+                )
         with col_cluster:
-            color = CLUSTER_COLORS.get(cluster_id, DEFAULT_COLOR)
             st.markdown(
                 f"<div style='background-color: rgb({color[0]},{color[1]},{color[2]}); "
                 f"color: white; padding: 8px; border-radius: 6px; text-align: center;'>"
@@ -143,10 +177,10 @@ def render_app() -> None:
     normal de l'app."""
     st.set_page_config(page_title="Bornes de recharge VE -- clusters communes", layout="wide")
 
-    st.title("Besoins en bornes de recharge VE par commune")
+    st.title("Estimation des besoins en bornes de recharge VE par commune")
     st.caption(
-        "Restitution du clustering K-Means (k=4) -- recherche par commune et vue "
-        "cartographique des grands ensembles géographiques."
+        "Catégorisation des communes françaises en 4 clusters selon leurs besoins estimés en capacités de recharge pour véhicules électriques (VE). "
+        "La catégorisation par cluter repose sur un modèle de clustering associant nombre de bornes électriques existantes (données IRVE), croissance du parc local de véhicules électriques (croissance des immatriculations) et risques de tensions électriques (données ENEDIS)."
     )
 
     st.subheader("Rechercher une commune")
@@ -171,9 +205,10 @@ def render_app() -> None:
 
     st.subheader("Carte des clusters")
     st.caption(
-        "Chaque point représente une commune, coloré selon son cluster. Les grands "
-        "ensembles de même couleur signalent des zones homogènes (ex. déserts IRVE)."
+        "Chaque point représente une commune, coloré selon son cluster."
     )
+    for cluster_id, description in CLUSTER_DESCRIPTIONS.items():
+        st.caption(f"Cluster {cluster_id} : {description}")
 
     legend_cols = st.columns(len(CLUSTER_COLORS) + 1)
     for cluster_id, color in CLUSTER_COLORS.items():
