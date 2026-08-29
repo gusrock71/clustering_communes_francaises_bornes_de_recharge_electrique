@@ -179,8 +179,9 @@ def render_app() -> None:
 
     st.title("Estimation des besoins en bornes de recharge VE par commune")
     st.caption(
+        "Cet outil est une preuve de concept (PoC) et ne doit en aucun cas être utilisé pour des décisions d'investissement ou de planification. "
         "Catégorisation des communes françaises en 4 clusters selon leurs besoins estimés en capacités de recharge pour véhicules électriques (VE). "
-        "La catégorisation par cluter repose sur un modèle de clustering associant nombre de bornes électriques existantes (données IRVE), croissance du parc local de véhicules électriques (croissance des immatriculations) et risques de tensions électriques (données ENEDIS)."
+        "La catégorisation par cluter repose sur un modèle de clustering associant nombre de bornes électriques existantes (données IRVE), croissance du parc local de véhicules électriques (base : immatriculations annuelles) et la part de thermosensibilité et de chauffage électrique dans la consommation locale (données ENEDIS)."
     )
 
     st.subheader("Rechercher une commune")
