@@ -70,11 +70,11 @@ immat_union as (
 -- carburant -- même bug/fix que côté DuckDB (build_staging.py, corrigé le
 -- 2026-08-19), FILTER se comporte pareil sous Postgres.
 --
--- immat_ve_annee_{{ loop.index }} : {{ loop.index }}=1 est l'année la plus
--- ancienne de la fenêtre glissante (annees[0]), {{ loop.index }}=8 la plus
--- récente (annees[-1]) -- voir macro immat_years() pour le calcul de la
--- fenêtre et le commentaire en tête de fichier pour la justification du
--- nommage positionnel plutôt que calendaire.
+-- immat_ve_annee_N : N=1 est l'année la plus ancienne de la fenêtre
+-- glissante (annees[0]), N=8 la plus récente (annees[-1]) -- voir macro
+-- immat_years() pour le calcul de la fenêtre et le commentaire en tête de
+-- fichier pour la justification du nommage positionnel plutôt que
+-- calendaire.
 immat_commune as (
 
     select
