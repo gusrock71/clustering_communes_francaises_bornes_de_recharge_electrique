@@ -195,6 +195,20 @@ def raw_table_name(source_name: str, file_key: str) -> str:
     return f"raw__{source_name}__{file_key}"
 
 
+def _drop_table_if_exists(engine: Engine, table: str) -> None:
+    """`DROP TABLE ... CASCADE` (Postgres) avant un rechargement 'replace'.
+
+    CASCADE n'existe que côté Postgres -- SQLite (utilisé dans les tests
+    comme stand-in de Postgres) n'a pas cette syntaxe, mais n'a pas non plus
+    le problème qu'elle résout (pas de vues dbt dessus dans les tests). On
+    n'ajoute donc CASCADE que sur le dialecte postgresql, un simple
+    `DROP TABLE IF EXISTS` suffisant ailleurs.
+    """
+    cascade = " CASCADE" if engine.dialect.name == "postgresql" else ""
+    with engine.begin() as conn:
+        conn.execute(text(f'DROP TABLE IF EXISTS "{table}"{cascade}'))
+
+
 def load_csv_bytes(
     engine: Engine,
     table: str,
@@ -275,6 +289,20 @@ def load_csv_bytes(
         if to_drop:
             logger.info("Colonnes exclues de la table '%s' (contrainte de volume) : %s", table, to_drop)
             df = df.drop(columns=to_drop)
+
+    if if_exists == "replace":
+        # pandas.to_sql(if_exists='replace') émet un DROP TABLE simple, qui
+        # échoue avec DependentObjectsStillExist dès qu'un `dbt run` a déjà eu
+        # lieu (les vues staging.stg_*/intermediate.int_* dépendent des
+        # tables raw__*, cf. incident du 2026-08-29 : premier run automatisé
+        # GitHub Actions après un `dbt run` précédent). On supprime donc la
+        # table nous-mêmes avec CASCADE avant d'appeler to_sql, qui se
+        # contente alors de la recréer (elle n'existe plus). Les vues/tables
+        # dbt supprimées en cascade (staging/intermediate/marts) sont de
+        # toute façon reconstruites par l'étape `dbt run` suivante du
+        # pipeline -- `ml__cluster_assignments` n'est jamais affecté, rien ne
+        # dépend de lui dans Postgres.
+        _drop_table_if_exists(engine, table)
 
     df.to_sql(table, engine, if_exists=if_exists, index=False)
 

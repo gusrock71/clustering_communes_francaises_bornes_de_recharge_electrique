@@ -23,6 +23,7 @@ from datetime import date, timedelta
 import pandas as pd
 import pytest
 import responses
+from sqlalchemy import text
 
 from ve_pipeline.ingestion import connector, s3_landing
 from ve_pipeline.ingestion.config import SOURCES
@@ -210,6 +211,73 @@ def test_reload_replaces_table_not_duplicates(tmp_path):
     second = postgres_loader.load_csv_bytes(engine, "raw__irve__test", content)
 
     assert first == second == 1
+
+
+def test_reload_succeeds_even_with_a_dependent_view(tmp_path):
+    """Incident réel du 2026-08-29 : le premier run automatisé GitHub Actions
+    a échoué sur `psycopg2.errors.DependentObjectsStillExist` -- un `dbt run`
+    précédent avait créé des vues (staging.stg_irve, etc.) dépendant des
+    tables raw__*, et l'ancien `to_sql(if_exists='replace')` émettait un
+    DROP TABLE simple, qui échoue dans ce cas sous Postgres. Corrigé par
+    `_drop_table_if_exists` (DROP TABLE IF EXISTS ... CASCADE), validé en
+    conditions réelles sur une branche Neon temporaire (reproduction exacte
+    de l'erreur, puis correctif confirmé, cf. session du 2026-08-29).
+
+    SQLite ne supporte pas les vues dépendant explicitement d'un DROP TABLE
+    de la même façon que Postgres (pas de CASCADE, et SQLite autorise le DROP
+    même avec une vue dessus -- elle devient simplement invalide à l'usage) :
+    ce test ne peut donc pas reproduire l'erreur elle-même sous SQLite, mais
+    vérifie que le mécanisme de rechargement continue de fonctionner sans
+    régression une fois une vue créée par-dessus la table."""
+    engine = _sqlite_engine(tmp_path)
+    postgres_loader.load_csv_bytes(engine, "raw__irve__test", b"col_a\nval1\n")
+    with engine.begin() as conn:
+        conn.execute(text("CREATE VIEW vue_test AS SELECT col_a FROM raw__irve__test"))
+
+    # Ne doit pas lever d'exception malgré la vue dépendante.
+    row_count = postgres_loader.load_csv_bytes(engine, "raw__irve__test", b"col_a\nval2\n")
+
+    assert row_count == 1
+
+
+def test_drop_table_if_exists_adds_cascade_only_for_postgresql():
+    """`_drop_table_if_exists` ne doit ajouter CASCADE (spécifique Postgres,
+    nécessaire pour supprimer les tables raw__* malgré les vues dbt qui en
+    dépendent) que sur le dialecte postgresql -- SQLite ne supporte pas ce
+    mot-clé (voir docstring de la fonction)."""
+
+    class _FakeDialect:
+        def __init__(self, name):
+            self.name = name
+
+    class _FakeConnection:
+        def __init__(self):
+            self.executed_sql: list[str] = []
+
+        def execute(self, statement):
+            self.executed_sql.append(str(statement))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    class _FakeEngine:
+        def __init__(self, dialect_name):
+            self.dialect = _FakeDialect(dialect_name)
+            self.connection = _FakeConnection()
+
+        def begin(self):
+            return self.connection
+
+    postgres_engine = _FakeEngine("postgresql")
+    postgres_loader._drop_table_if_exists(postgres_engine, "raw__irve__test")
+    assert "CASCADE" in postgres_engine.connection.executed_sql[0]
+
+    sqlite_engine = _FakeEngine("sqlite")
+    postgres_loader._drop_table_if_exists(sqlite_engine, "raw__irve__test")
+    assert "CASCADE" not in sqlite_engine.connection.executed_sql[0]
 
 
 def test_empty_file_raises_load_integrity_error(tmp_path):

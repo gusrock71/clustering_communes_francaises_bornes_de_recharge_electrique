@@ -578,6 +578,33 @@ date figée injectée, plutôt que de dépendre de la date réelle d'exécution
 du test -- reste vrai indéfiniment). Suite complète du projet : 109 passed
 / 3 skipped.
 
+## Incident : rechargement raw__* en échec après un dbt run (2026-08-29)
+
+Le tout premier run automatisé (déclenché manuellement depuis GitHub
+Actions) a échoué à l'étape de chargement Postgres :
+`psycopg2.errors.DependentObjectsStillExist` sur les 4 tables `raw__*`.
+Cause : `pandas.to_sql(if_exists='replace')` émet un `DROP TABLE` simple,
+qui échoue dès que des vues dbt (`staging.stg_irve`, etc., créées par le
+`dbt run` précédent) dépendent de la table -- jamais rencontré auparavant
+car aucun run précédent n'avait enchaîné rechargement → dbt run → nouveau
+rechargement sur une base où les vues existaient déjà.
+
+Corrigé par `postgres_loader._drop_table_if_exists()` : un
+`DROP TABLE IF EXISTS ... CASCADE` explicite avant `to_sql`, CASCADE
+n'étant ajouté que sur le dialecte Postgres (SQLite, utilisé dans les
+tests, n'a ni ce problème ni cette syntaxe). Les vues/tables dbt supprimées
+en cascade (staging/intermediate/marts) sont de toute façon reconstruites
+par l'étape `dbt run` suivante du pipeline ; `ml__cluster_assignments`
+n'est jamais affecté (rien ne dépend de lui dans Postgres, confirmé lors de
+la validation).
+
+Validé en conditions réelles sur une branche Neon temporaire (reproduction
+exacte de l'erreur, puis confirmation que le correctif la résout et que
+seules les vues attendues sont supprimées) avant de committer, plutôt que
+de retenter à l'aveugle sur le workflow GitHub Actions. Tests ajoutés :
+`tests/test_postgres_loader.py` (rechargement avec vue dépendante,
+comportement par dialecte). Suite complète : 111 passed / 3 skipped.
+
 ## Sauvegarde : ancien pipeline DuckDB/S3
 
 `ve_pipeline/jointure/`, `ve_pipeline/cleaning/`, `ve_pipeline/features/`
