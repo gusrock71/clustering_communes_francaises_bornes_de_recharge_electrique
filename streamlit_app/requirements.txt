@@ -1,0 +1,14 @@
+# Copie de requirements-streamlit.txt (racine) dans ce dossier : Streamlit
+# Community Cloud exige un fichier nommé exactement "requirements.txt", situé
+# soit à la racine du dépôt, soit dans le même dossier que le fichier
+# d'entrée (streamlit_app/app.py) -- pas de nom/chemin personnalisé possible.
+# La racine du dépôt a déjà un requirements.txt (celui du pipeline complet :
+# pyspark, dbt, mlflow...), qu'on ne veut surtout pas utiliser ici -- ce
+# fichier, dans le même dossier que app.py, est trouvé en priorité.
+# Garder synchronisé avec requirements-streamlit.txt si les dépendances
+# changent.
+streamlit>=1.38
+pydeck>=0.9
+requests>=2.31
+pandas>=2.0,<3.0
+python-dotenv>=1.0
