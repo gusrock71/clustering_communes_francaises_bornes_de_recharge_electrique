@@ -506,6 +506,78 @@ Suite complète du projet : 99 passed / 3 skipped.
 Prochaine étape : déploiement sur Streamlit Community Cloud (gratuit,
 connexion directe au repo GitHub).
 
+## Automatisation GitHub Actions + fenêtre glissante des immatriculations (2026-08-29)
+
+Décidé avec l'utilisateur : le pipeline complet (ingestion → chargement →
+dbt → ré-entraînement K-Means) tourne désormais automatiquement chaque
+trimestre, sans intervention manuelle.
+
+**`.github/workflows/pipeline.yml`** -- déclenché par `cron: "0 6 1 3,6,9,12 *"`
+(6h UTC, 1er mars/juin/septembre/décembre) et par `workflow_dispatch` (run
+manuel possible depuis l'onglet Actions). Séquence : ingestion S3 → chargement
+Postgres/Neon → `dbt seed`/`dbt run`/`dbt test` → `ve_pipeline.clustering.cli --k 4`
+(k=4 forcé explicitement -- le modèle retenu ne doit pas être re-décidé à
+chaque run automatisé). Le tracking MLflow de chaque run (`mlflow.db`,
+`mlruns/`) est conservé 90 jours en artefact de workflow pour inspection --
+éphémère par nature (runner GitHub Actions), le résultat qui compte en
+production (`ml__cluster_assignments`) est déjà écrit dans Postgres à
+l'étape précédente et lu directement par l'API Cloud Run (pas de
+redéploiement nécessaire après un run automatisé).
+
+Secrets GitHub requis (Settings → Secrets and variables → Actions) :
+`DATABASE_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`,
+`S3_BUCKET`, `DBT_NEON_HOST`, `DBT_NEON_PORT`, `DBT_NEON_USER`,
+`DBT_NEON_PASSWORD`, `DBT_NEON_DBNAME`.
+
+**Fenêtre glissante de 8 exercices pour les immatriculations** -- jusqu'ici
+figée à "2018-2025" en dur dans plusieurs fichiers, ce qui aurait rendu le
+pipeline incorrect dès 2027 sans intervention manuelle. Remplacée par un
+calcul à l'exécution : le dernier exercice complet est toujours l'année
+précédente, les 8 années gardées vont de `année_courante - 8` à
+`année_courante - 1` (2018-2025 en 2026, 2019-2026 en 2027, etc., comme
+demandé explicitement). Confirmé le 2026-08-29 sur les fichiers réels : le
+SDES publie un historique complet 2010-2025 (16 colonnes), pas déjà une
+fenêtre de 8 ans -- le calcul ne dépend donc jamais de la largeur du fichier
+source, seulement de la date d'exécution.
+
+Implémentation, à deux endroits synchronisés (même calcul, dupliqué
+volontairement plutôt que partagé entre Python et dbt, les deux écosystèmes
+n'ayant pas de mécanisme de partage de code simple) :
+- `ve_pipeline/loading/postgres_loader.py` --
+  `_immatriculation_years_to_exclude()` remplace l'ancien dict figé
+  `DROPPED_COLUMNS` : exclut toute colonne `immat_YYYY` hors fenêtre, quel
+  que soit le nombre d'années présentes dans le fichier source.
+- `dbt/macros/immat_years.sql` -- macro `immat_years()` (basée sur
+  `run_started_at`), utilisée par `stg_immatriculations_neuf/occasion.sql`
+  (colonnes à sélectionner) et `int_territorial_join.sql`
+  (union/agrégation).
+
+**Renommage de colonnes (rupture volontaire)** : comme la fenêtre glisse
+d'une année chaque année, les anciennes colonnes nommées par calendrier
+(`immat_ve_2018`, `immat_ve_baseline_2018_2020`, `immat_ve_recent_2023_2025`,
+`immat_toutes_motorisations_2025`) auraient changé de nom à chaque
+exécution -- cassant silencieusement tout ce qui s'y référerait. Renommées
+en noms stables et positionnels dans `int_territorial_join.sql` et
+`mart_clustering_dataset.sql` : `immat_ve_annee_1`...`immat_ve_annee_8`
+(1 = année la plus ancienne de la fenêtre, 8 = la plus récente),
+`immat_ve_baseline` (3 années les plus anciennes), `immat_ve_recent` (3 les
+plus récentes), `immat_toutes_motorisations_recente`. Aucun code aval
+(K-Means, API) ne référençait les anciens noms directement -- impact limité
+à la documentation.
+
+**IRVE** : aucun changement de logique. Chaque exécution retélécharge le
+fichier consolidé du moment et rejoue le nettoyage existant
+(`ve_pipeline/cleaning/irve_code_commune.py`/`int_irve_cleaned.sql`,
+dédup par `id_pdc_itinerance`/`date_maj`/`last_modified`) -- décision
+explicite de l'utilisateur, pas de logique de déduplication inter-runs
+supplémentaire (le remplacement de table à chaque chargement s'en charge
+déjà).
+
+Tests : `tests/test_postgres_loader.py` complété (fenêtre calculée avec une
+date figée injectée, plutôt que de dépendre de la date réelle d'exécution
+du test -- reste vrai indéfiniment). Suite complète du projet : 109 passed
+/ 3 skipped.
+
 ## Sauvegarde : ancien pipeline DuckDB/S3
 
 `ve_pipeline/jointure/`, `ve_pipeline/cleaning/`, `ve_pipeline/features/`

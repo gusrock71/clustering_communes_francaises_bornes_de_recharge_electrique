@@ -1,0 +1,97 @@
+name: Pipeline VE (ingestion trimestrielle)
+
+# Planification décidée le 2026-08-29 : rafraîchissement trimestriel plutôt
+# que quotidien/hebdomadaire, cohérent avec le rythme de mise à jour réel
+# des sources (SDES/immatriculations, IRVE, Enedis) -- inutile de solliciter
+# ces API plus souvent qu'elles ne publient de nouvelles données.
+#
+# Séquence : ingestion (S3) -> chargement (Postgres/Neon) -> dbt (seed/run/
+# test) -> ré-entraînement K-Means (écrit ml__cluster_assignments, lu par
+# l'API déjà déployée sur Cloud Run -- pas de redéploiement nécessaire, elle
+# lit Postgres en direct).
+#
+# workflow_dispatch : permet de déclencher un run manuel depuis l'onglet
+# Actions de GitHub, utile pour tester le workflow sans attendre la
+# prochaine échéance trimestrielle.
+on:
+  schedule:
+    # 6h UTC le 1er mars, juin, septembre, décembre.
+    - cron: "0 6 1 3,6,9,12 *"
+  workflow_dispatch:
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    # dbt-core est certifié Python 3.11+ (voir requirements-dbt.txt) --
+    # fixé explicitement plutôt que de suivre la dernière version d'Ubuntu.
+    env:
+      PYTHON_VERSION: "3.11"
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      S3_BUCKET: ${{ secrets.S3_BUCKET }}
+      DBT_NEON_HOST: ${{ secrets.DBT_NEON_HOST }}
+      DBT_NEON_PORT: ${{ secrets.DBT_NEON_PORT }}
+      DBT_NEON_USER: ${{ secrets.DBT_NEON_USER }}
+      DBT_NEON_PASSWORD: ${{ secrets.DBT_NEON_PASSWORD }}
+      DBT_NEON_DBNAME: ${{ secrets.DBT_NEON_DBNAME }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Installer les dépendances (pipeline + dbt)
+        run: |
+          pip install -r requirements.txt -r requirements-dbt.txt
+
+      - name: Ingestion -- dépôt des sources brutes sur S3
+        run: python -m ve_pipeline.ingestion.cli --bucket "$S3_BUCKET" --source all
+
+      - name: Chargement -- S3 vers Postgres/Neon (raw)
+        run: python -m ve_pipeline.loading.cli --bucket "$S3_BUCKET" --source all
+
+      - name: dbt seed
+        working-directory: dbt
+        run: dbt seed --profiles-dir .
+
+      - name: dbt run
+        working-directory: dbt
+        run: dbt run --profiles-dir .
+
+      - name: dbt test
+        working-directory: dbt
+        run: dbt test --profiles-dir .
+
+      # k=4 forcé explicitement : c'est le modèle retenu pour ce projet
+      # (décision documentée dans README.md/Notion, cf. comparaison k=3 vs
+      # k=4 du 2026-08-22) -- un run automatisé ne doit pas re-décider seul
+      # de la valeur de k à chaque exécution.
+      - name: Ré-entraînement K-Means (k=4) + écriture des clusters
+        run: python -m ve_pipeline.clustering.cli --k 4
+
+      # Le backend de tracking MLflow (sqlite:///mlflow.db, cf.
+      # kmeans_model.DEFAULT_TRACKING_URI) et les artefacts (./mlruns/) sont
+      # locaux au runner GitHub Actions -- éphémères, perdus à la fin du
+      # run. On les conserve 90 jours en artefact de workflow pour pouvoir
+      # inspecter l'historique d'un run donné sans avoir besoin d'un serveur
+      # MLflow toujours actif. Le résultat qui compte réellement en
+      # production (ml__cluster_assignments, lu par l'API Cloud Run) est
+      # déjà écrit dans Postgres à l'étape précédente, indépendamment de cet
+      # artefact.
+      - name: Conserver le tracking MLflow de ce run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlflow-run-${{ github.run_id }}
+          path: |
+            mlflow.db
+            mlruns/
+          retention-days: 90
+          if-no-files-found: ignore

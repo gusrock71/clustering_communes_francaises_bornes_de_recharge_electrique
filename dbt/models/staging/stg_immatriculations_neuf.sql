@@ -1,8 +1,11 @@
--- Colonnes déjà restreintes en amont par postgres_loader.DROPPED_COLUMNS :
--- IMMAT_2010...IMMAT_2017 exclus (contrainte de quota Neon, décision
--- explicite du 2026-08-21 -- voir le docstring de postgres_loader.py). Ce
--- modèle ne peut donc PAS reproduire le détail immat_ve_2010...immat_ve_2017
--- que le pipeline DuckDB/S3 (gardé en sauvegarde) calculait.
+-- Fenêtre glissante de 8 exercices (décision du 2026-08-29, voir la macro
+-- dbt/macros/immat_years.sql) : les colonnes immat_20XX sélectionnées ci-
+-- dessous sont calculées dynamiquement à partir de la date d'exécution,
+-- plus jamais une liste écrite en dur. `postgres_loader.py` applique le
+-- même calcul côté chargement Postgres pour ne garder que ces mêmes 8
+-- années, quelle que soit la largeur réelle du fichier source (confirmé le
+-- 2026-08-29 : le fichier SDES contient un historique complet 2010-2025,
+-- bien plus large que les 8 ans utilisés ici).
 --
 -- Filtre groupe/categorie (décision explicite du 2026-08-21, cf. section
 -- "Filtre véhicules concernés par la recharge IRVE" sur Notion) : on ne
@@ -24,14 +27,9 @@
 select
     commune_code as code_commune,
     carburant,
-    {{ safe_cast('immat_2018', 'integer') }} as immat_2018,
-    {{ safe_cast('immat_2019', 'integer') }} as immat_2019,
-    {{ safe_cast('immat_2020', 'integer') }} as immat_2020,
-    {{ safe_cast('immat_2021', 'integer') }} as immat_2021,
-    {{ safe_cast('immat_2022', 'integer') }} as immat_2022,
-    {{ safe_cast('immat_2023', 'integer') }} as immat_2023,
-    {{ safe_cast('immat_2024', 'integer') }} as immat_2024,
-    {{ safe_cast('immat_2025', 'integer') }} as immat_2025
+    {% for annee in immat_years() -%}
+    {{ safe_cast('immat_' ~ annee, 'integer') }} as immat_{{ annee }}{% if not loop.last %},{% endif %}
+    {% endfor %}
 from {{ source('raw', 'raw__immatriculations__immatriculations_neuf') }}
 where groupe in ('VP', 'VUL')
    or (groupe = 'CATL' and categorie = 'MOTOCYCLETTE')

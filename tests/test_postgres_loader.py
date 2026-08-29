@@ -124,11 +124,15 @@ def test_load_source_from_s3_applies_kept_columns_for_irve(s3_client, tmp_path):
 
 
 def test_drop_columns_excludes_old_immat_years_but_keeps_row_count(tmp_path):
-    """Contrainte d'infra (quota Neon 512 Mo, cf. postgres_loader.DROPPED_COLUMNS) :
-    immat_2010...immat_2017 ne doivent pas atterrir en base pour les fichiers
-    immatriculations, sans que ça touche le nombre de lignes ni les autres
-    colonnes. Le fichier S3 source, lui, reste inchangé (non testé ici, propre
-    à load_csv_bytes qui ne voit que des bytes déjà en mémoire)."""
+    """Contrainte d'infra (quota Neon 512 Mo, cf.
+    postgres_loader._immatriculation_years_to_exclude) : les colonnes
+    immat_YYYY hors fenêtre ne doivent pas atterrir en base pour les
+    fichiers immatriculations, sans que ça touche le nombre de lignes ni les
+    autres colonnes. Le fichier S3 source, lui, reste inchangé (non testé
+    ici, propre à load_csv_bytes qui ne voit que des bytes déjà en
+    mémoire). Ce test couvre le mécanisme générique `drop_columns` de
+    load_csv_bytes, indépendamment du calcul de la fenêtre glissante
+    (testé séparément ci-dessous, avec une date figée)."""
     engine = _sqlite_engine(tmp_path)
     header = "commune_code;immat_2017;immat_2018;immat_2025\n"
     content = (header + "75056;3;4;5\n").encode("utf-8")
@@ -142,13 +146,44 @@ def test_drop_columns_excludes_old_immat_years_but_keeps_row_count(tmp_path):
     assert list(df.columns) == ["commune_code", "immat_2018", "immat_2025"]
 
 
+def test_immatriculation_years_to_exclude_uses_a_sliding_8_year_window():
+    """Fenêtre glissante (décision du 2026-08-29) : `today` est injecté
+    explicitement plutôt que de dépendre de la date réelle d'exécution du
+    test (`date.today()` n'est pas monkey-patchable, `datetime.date` étant
+    un type C immuable) -- ce test reste donc vrai indéfiniment, contrairement
+    à l'ancienne version figée "2010-2017" qu'il remplace."""
+    # Le 1er mars 2026 : dernier exercice complet = 2025, fenêtre = 2018-2025
+    # (identique à l'ancien comportement figé, coïncidence de calendrier).
+    excluded_2026 = postgres_loader._immatriculation_years_to_exclude(today=date(2026, 3, 1))
+    assert "immat_2017" in excluded_2026
+    assert "immat_2010" in excluded_2026
+    assert "immat_2018" not in excluded_2026
+    assert "immat_2025" not in excluded_2026
+    assert "immat_2026" in excluded_2026  # exercice en cours, pas encore complet
+
+    # Un an plus tard : la fenêtre glisse d'un an (2019-2026), comme demandé
+    # explicitement par l'utilisateur ("2018-2025, 2019-2026, 2020-2027...").
+    excluded_2027 = postgres_loader._immatriculation_years_to_exclude(today=date(2027, 6, 1))
+    assert "immat_2018" in excluded_2027  # sorti de la fenêtre
+    assert "immat_2019" not in excluded_2027
+    assert "immat_2026" not in excluded_2027
+    assert "immat_2027" in excluded_2027  # exercice en cours
+
+
 def test_load_source_from_s3_applies_dropped_columns_for_immatriculations(s3_client, tmp_path):
-    """Vérifie le branchement complet load_source_from_s3 -> DROPPED_COLUMNS
-    pour les 2 fichiers immatriculations réels."""
+    """Vérifie le branchement complet load_source_from_s3 ->
+    _immatriculation_years_to_exclude pour les 2 fichiers immatriculations
+    réels. Le fichier de test couvre une plage d'années large (2000-2099)
+    plutôt que des bornes hardcodées : les colonnes attendues sont dérivées
+    de la fonction réelle (date du jour, pas figée), donc ce test reste
+    vrai quelle que soit la date à laquelle il s'exécute -- contrairement à
+    l'ancienne version qui hardcodait "2010/2017/2018/2025", correcte
+    seulement tant que la fenêtre réelle restait 2018-2025."""
     s3_landing.ensure_bucket(s3_client, TEST_BUCKET)
-    content = (
-        "COMMUNE_CODE;IMMAT_2010;IMMAT_2017;IMMAT_2018;IMMAT_2025\n75056;1;2;3;4\n"
-    ).encode("utf-8")
+    toutes_annees = list(range(2000, 2100))
+    header = "COMMUNE_CODE;" + ";".join(f"IMMAT_{a}" for a in toutes_annees)
+    ligne = "75056;" + ";".join("1" for _ in toutes_annees)
+    content = f"{header}\n{ligne}\n".encode("utf-8")
     key = s3_landing.landing_key("immatriculations", "immatriculations_neuf", "csv")
     s3_landing.upload_bytes(s3_client, TEST_BUCKET, key, content, "text/csv")
 
@@ -159,7 +194,12 @@ def test_load_source_from_s3_applies_dropped_columns_for_immatriculations(s3_cli
 
     assert result.status == "ok", result.error
     df = pd.read_sql_table(result.table, engine)
-    assert list(df.columns) == ["commune_code", "immat_2018", "immat_2025"]
+
+    exclues = postgres_loader._immatriculation_years_to_exclude()
+    colonnes_annees_attendues = {f"immat_{a}" for a in toutes_annees} - exclues
+    assert set(df.columns) - {"commune_code"} == colonnes_annees_attendues
+    # La fenêtre fait toujours 8 ans, quelle que soit la date d'exécution.
+    assert len(colonnes_annees_attendues) == 8
 
 
 def test_reload_replaces_table_not_duplicates(tmp_path):

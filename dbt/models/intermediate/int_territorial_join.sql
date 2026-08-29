@@ -5,10 +5,18 @@
 --   - IRVE : lit int_irve_cleaned (dédup + code_insee_commune reconstitué,
 --     port de ve_pipeline/cleaning/irve_code_commune.py, ajouté le
 --     2026-08-21) plutôt que stg_irve brut.
---   - Immatriculations : IMMAT_2018...IMMAT_2025 uniquement (2010-2017
---     exclus dès le chargement Postgres, décision explicite du 2026-08-21).
---     Le détail immat_ve_2010...immat_ve_2017 du pipeline DuckDB original
---     n'est donc PAS reproduit ici -- écart accepté par l'utilisateur.
+--   - Immatriculations : fenêtre glissante de 8 exercices (macro
+--     `immat_years()`, décision du 2026-08-29 -- remplace la précédente
+--     fenêtre figée "2018-2025"). Les colonnes de sortie ne portent PLUS
+--     l'année dans leur nom (immat_ve_annee_1..8, immat_ve_baseline,
+--     immat_ve_recent, immat_toutes_motorisations_recente) : comme la
+--     fenêtre glisse d'une année chaque année, des noms de colonnes basés
+--     sur le calendrier (ex. immat_ve_2018) changeraient chaque année et
+--     casseraient tout ce qui s'y référerait explicitement. immat_ve_annee_1
+--     = année la plus ancienne de la fenêtre, immat_ve_annee_8 = la plus
+--     récente. Le détail antérieur à la fenêtre (ex. immat_ve_2010...2017
+--     aujourd'hui) n'est donc pas reproduit ici -- écart accepté par
+--     l'utilisateur (déjà le cas avant ce changement).
 --   - Enedis : restreint au secteur RESIDENTIEL, casts défensifs (safe_cast)
 --     pour les valeurs masquées (secret statistique).
 --   - zone_densite (ajouté le 2026-08-21) : grille de densité Insee (seed
@@ -16,6 +24,8 @@
 --     en 'urbain' (Urbain dense + Urbain intermédiaire) / 'rural' (Rural).
 --     Variable de contexte territorial, pas utilisée dans les agrégations
 --     ci-dessous -- simple LEFT JOIN final sur code_commune.
+
+{% set annees = immat_years() %}
 
 with irve_commune as (
 
@@ -35,12 +45,22 @@ with irve_commune as (
 
 immat_union as (
 
-    select code_commune, carburant, immat_2018, immat_2019, immat_2020, immat_2021, immat_2022, immat_2023, immat_2024, immat_2025
+    select
+        code_commune,
+        carburant,
+        {% for annee in annees -%}
+        immat_{{ annee }}{% if not loop.last %},{% endif %}
+        {% endfor %}
     from {{ ref('stg_immatriculations_neuf') }}
 
     union all
 
-    select code_commune, carburant, immat_2018, immat_2019, immat_2020, immat_2021, immat_2022, immat_2023, immat_2024, immat_2025
+    select
+        code_commune,
+        carburant,
+        {% for annee in annees -%}
+        immat_{{ annee }}{% if not loop.last %},{% endif %}
+        {% endfor %}
     from {{ ref('stg_immatriculations_occasion') }}
 
 ),
@@ -49,27 +69,30 @@ immat_union as (
 -- NULL (pas 0) quand aucune ligne de la commune ne correspond au filtre
 -- carburant -- même bug/fix que côté DuckDB (build_staging.py, corrigé le
 -- 2026-08-19), FILTER se comporte pareil sous Postgres.
+--
+-- immat_ve_annee_{{ loop.index }} : {{ loop.index }}=1 est l'année la plus
+-- ancienne de la fenêtre glissante (annees[0]), {{ loop.index }}=8 la plus
+-- récente (annees[-1]) -- voir macro immat_years() pour le calcul de la
+-- fenêtre et le commentaire en tête de fichier pour la justification du
+-- nommage positionnel plutôt que calendaire.
 immat_commune as (
 
     select
         code_commune,
-        coalesce(sum(immat_2018) filter (where carburant in ('Electrique et hydrogène', 'Hybride rechargeable')), 0) as immat_ve_2018,
-        coalesce(sum(immat_2019) filter (where carburant in ('Electrique et hydrogène', 'Hybride rechargeable')), 0) as immat_ve_2019,
-        coalesce(sum(immat_2020) filter (where carburant in ('Electrique et hydrogène', 'Hybride rechargeable')), 0) as immat_ve_2020,
-        coalesce(sum(immat_2021) filter (where carburant in ('Electrique et hydrogène', 'Hybride rechargeable')), 0) as immat_ve_2021,
-        coalesce(sum(immat_2022) filter (where carburant in ('Electrique et hydrogène', 'Hybride rechargeable')), 0) as immat_ve_2022,
-        coalesce(sum(immat_2023) filter (where carburant in ('Electrique et hydrogène', 'Hybride rechargeable')), 0) as immat_ve_2023,
-        coalesce(sum(immat_2024) filter (where carburant in ('Electrique et hydrogène', 'Hybride rechargeable')), 0) as immat_ve_2024,
-        coalesce(sum(immat_2025) filter (where carburant in ('Electrique et hydrogène', 'Hybride rechargeable')), 0) as immat_ve_2025,
-        sum(immat_2025) as immat_toutes_motorisations_2025,
+        {% for annee in annees -%}
+        coalesce(sum(immat_{{ annee }}) filter (where carburant in ('Electrique et hydrogène', 'Hybride rechargeable')), 0) as immat_ve_annee_{{ loop.index }},
+        {% endfor %}
+        sum(immat_{{ annees[-1] }}) as immat_toutes_motorisations_recente,
         coalesce(
-            sum(immat_2018 + immat_2019 + immat_2020) filter (where carburant in ('Electrique et hydrogène', 'Hybride rechargeable')),
+            sum({% for annee in annees[:3] %}immat_{{ annee }}{% if not loop.last %} + {% endif %}{% endfor %})
+                filter (where carburant in ('Electrique et hydrogène', 'Hybride rechargeable')),
             0
-        ) as immat_ve_baseline_2018_2020,
+        ) as immat_ve_baseline,
         coalesce(
-            sum(immat_2023 + immat_2024 + immat_2025) filter (where carburant in ('Electrique et hydrogène', 'Hybride rechargeable')),
+            sum({% for annee in annees[-3:] %}immat_{{ annee }}{% if not loop.last %} + {% endif %}{% endfor %})
+                filter (where carburant in ('Electrique et hydrogène', 'Hybride rechargeable')),
             0
-        ) as immat_ve_recent_2023_2025
+        ) as immat_ve_recent
     from immat_union
     where code_commune is not null and code_commune <> ''
     group by code_commune
@@ -120,22 +143,17 @@ select
     coalesce(i.puissance_moyenne_pdc_kw, 0) as puissance_moyenne_pdc_kw,
     coalesce(i.part_recharge_rapide, 0) as part_recharge_rapide,
     i.pct_pdc_code_insee_verifie,
-    m.immat_ve_2018,
-    m.immat_ve_2019,
-    m.immat_ve_2020,
-    m.immat_ve_2021,
-    m.immat_ve_2022,
-    m.immat_ve_2023,
-    m.immat_ve_2024,
-    m.immat_ve_2025,
-    m.immat_toutes_motorisations_2025,
-    m.immat_ve_baseline_2018_2020,
-    m.immat_ve_recent_2023_2025,
-    case when m.immat_ve_baseline_2018_2020 > 0
-         then (m.immat_ve_recent_2023_2025 - m.immat_ve_baseline_2018_2020) * 1.0 / m.immat_ve_baseline_2018_2020
+    {% for annee in annees -%}
+    m.immat_ve_annee_{{ loop.index }},
+    {% endfor -%}
+    m.immat_toutes_motorisations_recente,
+    m.immat_ve_baseline,
+    m.immat_ve_recent,
+    case when m.immat_ve_baseline > 0
+         then (m.immat_ve_recent - m.immat_ve_baseline) * 1.0 / m.immat_ve_baseline
          else null end as croissance_immat_ve_pct,
     case when m.code_commune is null then null
-         when m.immat_ve_baseline_2018_2020 = 0 and m.immat_ve_recent_2023_2025 > 0 then true
+         when m.immat_ve_baseline = 0 and m.immat_ve_recent > 0 then true
          else false end as demarrage_ve_tardif,
     e.nb_sites_residentiel,
     e.conso_totale_residentielle_mwh,

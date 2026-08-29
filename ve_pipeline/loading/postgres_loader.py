@@ -15,25 +15,22 @@ simplement normalisées en identifiants SQL sûrs. Le renommage et le typage
 métier restent le rôle de dbt (ou, pour l'instant, des vues DuckDB de
 ve_pipeline/jointure/build_staging.py qui lisent directement S3).
 
-Exception assumée (2026-08-21) : `DROPPED_COLUMNS`/`KEPT_COLUMNS` ci-dessous
-excluent certaines colonnes de la copie Postgres — pas une transformation
-métier mais une contrainte d'infra (quota gratuit Neon, 512 Mo/projet). Le
-fichier S3 correspondant reste toujours intact et complet (source de vérité
-"raw" inchangée) ; seule la copie Postgres est allégée :
-  - immatriculations (neuf/occasion) : `DROPPED_COLUMNS` exclut
-    `immat_2010`...`immat_2017` (16 colonnes -> 8). ATTENTION, précision
-    apportée le 2026-08-21 après relecture détaillée de
-    `build_staging.py` : `croissance_immat_ve_pct`/`demarrage_ve_tardif` ne
-    comparent que 2018-2020 vs 2023-2025, MAIS la jointure calcule aussi un
-    détail année par année (`immat_ve_2010`...`immat_ve_2025`) sur
-    l'intégralité de la période, déjà testé
-    (`test_immatriculations_exposes_individual_year_columns`). Le pipeline
-    actuel (DuckDB sur S3, jamais Postgres) n'est pas affecté par cette
-    exclusion. Mais une future migration dbt/Postgres de cette jointure ne
-    pourrait PAS reproduire le détail 2010-2017 avec la copie Postgres
-    actuelle -- écart accepté explicitement par l'utilisateur le 2026-08-21
-    (quota Neon prioritaire, signal quasi nul sur cette période : 95,3% des
-    communes à 0 immatriculation VE en 2010).
+Exception assumée (2026-08-21, révisée le 2026-08-29) :
+`_immatriculation_years_to_exclude()`/`KEPT_COLUMNS` ci-dessous excluent
+certaines colonnes de la copie Postgres — pas une transformation métier
+mais une contrainte d'infra (quota gratuit Neon, 512 Mo/projet). Le fichier
+S3 correspondant reste toujours intact et complet (source de vérité "raw"
+inchangée) ; seule la copie Postgres est allégée :
+  - immatriculations (neuf/occasion) : fenêtre glissante de 8 exercices
+    (décision du 2026-08-29, remplace la précédente exclusion figée
+    "2010-2017"). `_immatriculation_years_to_exclude()` calcule à
+    l'exécution les colonnes `immat_YYYY` à exclure -- toute année en
+    dehors de [année_courante-8, année_courante-1], quel que soit le nombre
+    d'années réellement présentes dans le fichier source (confirmé le
+    2026-08-29 sur les fichiers réels : 2010-2025, 16 colonnes). MÊME
+    CALCUL que la macro dbt `immat_years()` (dbt/macros/immat_years.sql) --
+    les deux doivent rester synchronisés, l'un décidant ce qui entre en
+    base, l'autre ce que dbt sélectionne dans cette même base.
   - irve / enedis_conso : `KEPT_COLUMNS` restreint aux seules colonnes lues
     par le nettoyage (`ve_pipeline/cleaning/irve_code_commune.py`) et la
     jointure (`build_staging.py`) -- respectivement 9/52 et 8/49 colonnes.
@@ -90,14 +87,45 @@ class LoadResult:
     error: str | None = None
 
 
-# Colonnes exclues de la copie Postgres pour certains fichiers (clé =
-# (source_name, file_key)), voir l'explication en tête de module. Le fichier
-# S3 correspondant reste complet ; seules ces colonnes ne sont pas insérées
-# en base.
-DROPPED_COLUMNS: dict[tuple[str, str], set[str]] = {
-    ("immatriculations", "immatriculations_neuf"): {f"immat_{year}" for year in range(2010, 2018)},
-    ("immatriculations", "immatriculations_occasion"): {f"immat_{year}" for year in range(2010, 2018)},
+# Fichiers concernés par une fenêtre glissante d'immatriculations (voir
+# _immatriculation_years_to_exclude ci-dessous et l'explication en tête de
+# module). Clé = (source_name, file_key), même convention que KEPT_COLUMNS.
+_IMMATRICULATION_FILES: set[tuple[str, str]] = {
+    ("immatriculations", "immatriculations_neuf"),
+    ("immatriculations", "immatriculations_occasion"),
 }
+
+
+def _immatriculation_years_to_exclude(today: date | None = None) -> set[str]:
+    """Colonnes `immat_YYYY` à exclure de la copie Postgres pour ne garder
+    que la fenêtre glissante de 8 exercices (décision du 2026-08-29).
+
+    Calculé à partir de la date du jour, PAS d'une liste figée : le dernier
+    exercice complet est toujours l'année précédente (`today.year - 1`), les
+    8 années gardées vont de `année_courante - 8` à `année_courante - 1`.
+    Toute colonne `immat_YYYY` en dehors de cette fenêtre est exclue, quel
+    que soit le nombre d'années réellement présentes dans le fichier source
+    (aujourd'hui 2010-2025, 16 colonnes -- confirmé le 2026-08-29 sur les
+    fichiers réels).
+
+    MÊME CALCUL que la macro dbt `immat_years()`
+    (dbt/macros/immat_years.sql) -- à garder synchronisé si la largeur de la
+    fenêtre (8 ans) ou la règle de calcul changent un jour.
+    """
+    today = today or date.today()
+    annee_recente = today.year - 1
+    annee_ancienne = annee_recente - 7
+    annees_a_garder = set(range(annee_ancienne, annee_recente + 1))
+    # Plage volontairement large et fixe (1990-2100), PAS bornée sur
+    # `annee_recente` : couvre aussi bien un historique source qui remonte
+    # loin dans le passé (2010-2025 aujourd'hui) qu'une colonne pour
+    # l'exercice en cours ou même au-delà si le fichier source en contenait
+    # une par anticipation -- toute colonne `immat_YYYY` réellement présente
+    # dans le fichier (cf. `header` dans load_csv_bytes) hors de la fenêtre
+    # des 8 exercices est exclue, sans dépendre du nombre d'années que le
+    # fichier source contient réellement.
+    annees_plausibles = range(1990, 2100)
+    return {f"immat_{annee}" for annee in annees_plausibles if annee not in annees_a_garder}
 
 # Allowlist de colonnes (noms déjà normalisés par _sanitize_column) pour les
 # fichiers où la source a beaucoup plus de colonnes qu'utilisées en aval.
@@ -297,7 +325,9 @@ def load_source_from_s3(
     table = raw_table_name(source_name, file_key)
     try:
         content = s3_landing.read_object(s3_client, bucket, key)
-        drop_columns = DROPPED_COLUMNS.get((source_name, file_key))
+        drop_columns = (
+            _immatriculation_years_to_exclude() if (source_name, file_key) in _IMMATRICULATION_FILES else None
+        )
         keep_columns = KEPT_COLUMNS.get((source_name, file_key))
         row_count = load_csv_bytes(engine, table, content, drop_columns=drop_columns, keep_columns=keep_columns)
         logger.info("OK -> table '%s' (%s lignes) depuis s3://%s/%s", table, row_count, bucket, key)

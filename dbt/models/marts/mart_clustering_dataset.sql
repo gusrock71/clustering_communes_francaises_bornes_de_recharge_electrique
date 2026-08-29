@@ -16,9 +16,12 @@
 -- l'utilisateur : communes sous/bien équipées en VE x communes en
 -- risque/bien desservies électriquement) :
 --   - nb_ve_stock_estime : proxy du parc VE en circulation par commune,
---     somme des immatriculations 2018-2025 (immat_ve_2018...immat_ve_2025).
---     C'est un flux cumulé, pas un vrai stock (ignore la casse/les départs
---     de véhicules hors commune) -- approximation acceptée faute de mieux.
+--     somme des immatriculations sur la fenêtre glissante de 8 exercices
+--     (immat_ve_annee_1...immat_ve_annee_8, macro immat_years() -- noms
+--     positionnels, pas calendaires, depuis le 2026-08-29, voir
+--     int_territorial_join.sql). C'est un flux cumulé, pas un vrai stock
+--     (ignore la casse/les départs de véhicules hors commune) --
+--     approximation acceptée faute de mieux.
 --   - taux_couverture_afir = puissance installée / (1,3 kW * stock VE),
 --     1,3 kW = seuil réglementaire AFIR (UE, en vigueur depuis avril 2024)
 --     par VE à batterie en circulation. 1 = conforme, <1 = sous-doté.
@@ -50,9 +53,9 @@ with_stock as (
 
     select
         *,
-        coalesce(immat_ve_2018, 0) + coalesce(immat_ve_2019, 0) + coalesce(immat_ve_2020, 0)
-            + coalesce(immat_ve_2021, 0) + coalesce(immat_ve_2022, 0) + coalesce(immat_ve_2023, 0)
-            + coalesce(immat_ve_2024, 0) + coalesce(immat_ve_2025, 0) as nb_ve_stock_estime
+        {% for i in range(1, 9) -%}
+        coalesce(immat_ve_annee_{{ i }}, 0){% if not loop.last %} + {% endif %}
+        {% endfor %} as nb_ve_stock_estime
     from base
 
 ),
@@ -139,17 +142,12 @@ select
     b.puissance_moyenne_pdc_kw,
     b.part_recharge_rapide,
     b.pct_pdc_code_insee_verifie,
-    b.immat_ve_2018,
-    b.immat_ve_2019,
-    b.immat_ve_2020,
-    b.immat_ve_2021,
-    b.immat_ve_2022,
-    b.immat_ve_2023,
-    b.immat_ve_2024,
-    b.immat_ve_2025,
-    b.immat_toutes_motorisations_2025,
-    b.immat_ve_baseline_2018_2020,
-    b.immat_ve_recent_2023_2025,
+    {% for i in range(1, 9) -%}
+    b.immat_ve_annee_{{ i }},
+    {% endfor -%}
+    b.immat_toutes_motorisations_recente,
+    b.immat_ve_baseline,
+    b.immat_ve_recent,
     -- demarrage_ve_tardif=true -> médiane (valeur neutre, Option A).
     -- Sinon -> COALESCE à 0 : une croissance NULL restante signifie "jamais
     -- eu de VE sur toute la période" (baseline ET récent tous deux à 0),
