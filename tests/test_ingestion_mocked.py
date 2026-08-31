@@ -29,8 +29,11 @@ IRVE_SAMPLE = (
     b"id_pdc_itinerance;code_insee_commune;puissance_nominale\n"
     b"FRXXXP0001;75056;22.0\n"
 )
-IMMAT_SAMPLE_1 = b"codgeo;epci;annee;nb_ve\n75056;200054781;2025;120\n"
-IMMAT_SAMPLE_2 = b"codgeo;annee;nb_vt\n75056;2025;530\n"
+# En-têtes réels SDES (COMMUNE_CODE;CARBURANT;IMMAT_YYYY...), cf. commentaire
+# schema_hint dans config.py (confirmé le 2026-08-31 via
+# ve_pipeline/jointure/build_staging.py et les modèles dbt staging).
+IMMAT_SAMPLE_1 = b"COMMUNE_CODE;CARBURANT;IMMAT_2018;IMMAT_2019\n75056;Electrique et hydrogene;10;12\n"
+IMMAT_SAMPLE_2 = b"COMMUNE_CODE;CARBURANT;IMMAT_2018;IMMAT_2019\n75056;Diesel;5;6\n"
 
 # Enedis est paginé (API data-fair) : on simule 2 pages reliées par un header
 # HTTP `Link: rel="next"`, comme observé en conditions réelles. En-tête et BOM

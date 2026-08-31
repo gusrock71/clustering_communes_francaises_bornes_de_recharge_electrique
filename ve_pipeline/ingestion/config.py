@@ -12,11 +12,13 @@ voir README) :
     change de format sans préavis, l'ingestion échoue explicitement au
     lieu de déposer silencieusement un fichier inexploitable dans la
     landing zone.
-  - Les `schema_hint` ci-dessous pour "immatriculations" sont indicatifs
-    (colonnes usuelles SDES : codgeo/epci/annee/...) et doivent être
-    confirmés/ajustés dès que le fichier réel est téléchargé une première
-    fois (le sandbox de développement n'a pas d'accès réseau sortant vers
-    data.gouv.fr pour le vérifier automatiquement).
+  - Les `schema_hint` pour "immatriculations" (mis à jour le 2026-08-31) ne
+    sont plus des valeurs indicatives : ils reprennent les colonnes réelles
+    (COMMUNE_CODE, CARBURANT, IMMAT_YYYY) déjà lues en conditions réelles par
+    `ve_pipeline/jointure/build_staging.py` et par les modèles dbt
+    `stg_immatriculations_neuf/occasion` -- le sandbox de développement n'a
+    toujours pas d'accès réseau sortant vers data.gouv.fr pour retélécharger
+    le fichier lui-même, mais son en-tête est connu par un autre chemin.
   - La source "enedis_conso" tourne sur une plateforme différente (data-fair,
     pas Opendatasoft) : le dataset fait 3,47M lignes et l'API pagine par lots
     de 10 000 lignes via un header HTTP `Link: rel="next"`, pas de fichier
@@ -101,7 +103,16 @@ SOURCES: dict[str, Source] = {
                 key="immatriculations_neuf",
                 url="https://www.data.gouv.fr/api/1/datasets/r/b2bac57a-7a25-4df1-9808-46b96b25311d",
                 expected_ext="csv",
-                schema_hint=(),  # colonnes exactes à confirmer au premier run réel
+                # Confirmé le 2026-08-31 : colonnes réellement lues en aval
+                # (ve_pipeline/jointure/build_staging.py, lecture DuckDB
+                # directe du CSV S3 -- COMMUNE_CODE/CARBURANT/IMMAT_YYYY
+                # confirmés en conditions réelles le 2026-08-19/21 ; voir
+                # aussi dbt/models/staging/stg_immatriculations_neuf.sql qui
+                # lit ces mêmes colonnes une fois sanitizées en snake_case).
+                # "immat_" (sans année précise) plutôt que "immat_2010" : la
+                # fenêtre glissante de 8 exercices ne doit pas figer une
+                # année particulière dans ce garde-fou.
+                schema_hint=("commune_code", "carburant", "immat_"),
             ),
             SourceFile(
                 # "Immatriculations de véhicules achetés d'occasion au niveau communal" :
@@ -110,7 +121,9 @@ SOURCES: dict[str, Source] = {
                 key="immatriculations_occasion",
                 url="https://www.data.gouv.fr/api/1/datasets/r/eac49e71-bad2-49a0-980f-59bc960f5e2c",
                 expected_ext="csv",
-                schema_hint=(),  # colonnes exactes à confirmer au premier run réel
+                # Même schéma que immatriculations_neuf, voir le commentaire
+                # ci-dessus (confirmé le 2026-08-31).
+                schema_hint=("commune_code", "carburant", "immat_"),
             ),
         ),
     ),
