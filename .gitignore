@@ -22,7 +22,10 @@ dbt/seeds/_tmp/
 *.xlsx
 !dbt/seeds/*.csv
 
-# Livrables générés (dossier professionnel, captures OpenMetadata, etc.) --
-# volumineux, régénérables, gardés hors dépôt git (décision du 2026-08-31).
+# Livrables générés (dossier professionnel, présentation, captures
+# OpenMetadata, etc.) -- volumineux, régénérables, gardés hors dépôt git
+# (décision du 2026-08-31, étendue au pptx/key le 2026-09-07).
 *.docx
+*.pptx
+*.key
 
