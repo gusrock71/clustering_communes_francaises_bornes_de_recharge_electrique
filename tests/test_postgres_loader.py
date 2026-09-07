@@ -293,8 +293,12 @@ def test_full_pipeline_sources_to_s3_to_postgres(s3_client, tmp_path):
     bout en bout, sans jamais écrire dans Postgres directement depuis la
     source."""
     irve_sample = b"id_pdc_itinerance;code_insee_commune;puissance_nominale\nFRXXXP0001;75056;22.0\n"
-    immat_neuf_sample = b"codgeo;epci;annee;nb_ve\n75056;200054781;2025;120\n"
-    immat_occasion_sample = b"codgeo;annee;nb_vt\n75056;2025;530\n"
+    # En-têtes réels (COMMUNE_CODE;CARBURANT;IMMAT_<année>), cf. schema_hint
+    # de SOURCES["immatriculations"] dans ve_pipeline/ingestion/config.py --
+    # un en-tête placeholder (ex: "codgeo;epci;annee;nb_ve") est désormais
+    # rejeté par l'ingestion avant même d'atteindre S3/le loader.
+    immat_neuf_sample = b"COMMUNE_CODE;CARBURANT;IMMAT_2018;IMMAT_2019\n75056;Electrique et hydrogene;10;12\n"
+    immat_occasion_sample = b"COMMUNE_CODE;CARBURANT;IMMAT_2018;IMMAT_2019\n75056;Diesel;5;6\n"
     enedis_page_1 = (
         "﻿Année,Code Commune,nb_sites,Conso totale (MWh),CODE GRAND SECTEUR\n"
         "2024,75056,12,123456,RESIDENTIEL\n"
