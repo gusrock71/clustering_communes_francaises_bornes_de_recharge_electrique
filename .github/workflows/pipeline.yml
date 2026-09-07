@@ -47,9 +47,17 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
 
-      - name: Installer les dépendances (pipeline + dbt)
+      - name: Installer les dépendances (pipeline + dbt + tests)
         run: |
-          pip install -r requirements.txt -r requirements-dbt.txt
+          pip install -r requirements.txt -r requirements-dbt.txt -r requirements-dev.txt
+
+      # Suite standard uniquement (mocks S3 via moto, pas d'accès réseau
+      # réel) -- les tests marqués "live" (test_ingestion_live.py) restent
+      # désactivés par défaut (RUN_LIVE_TESTS != 1), voir pytest.ini/README.
+      # Placée avant l'ingestion réelle : inutile de solliciter S3/Postgres
+      # si la suite casse.
+      - name: Tests (pytest)
+        run: pytest
 
       - name: Ingestion -- dépôt des sources brutes sur S3
         run: python -m ve_pipeline.ingestion.cli --bucket "$S3_BUCKET" --source all
