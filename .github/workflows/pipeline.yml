@@ -49,11 +49,14 @@ jobs:
 
       - name: Installer les dépendances (pipeline + dbt + tests)
         run: |
-          pip install -r requirements.txt -r requirements-dbt.txt -r requirements-dev.txt
+          pip install -r requirements.txt -r requirements-dbt.txt -r requirements-dev.txt -r requirements-streamlit.txt
 
       # Suite standard uniquement (mocks S3 via moto, pas d'accès réseau
       # réel) -- les tests marqués "live" (test_ingestion_live.py) restent
       # désactivés par défaut (RUN_LIVE_TESTS != 1), voir pytest.ini/README.
+      # requirements-streamlit.txt installé ci-dessus : test_streamlit_app.py
+      # importe streamlit_app/app.py (streamlit + pydeck), sinon ImportError
+      # à la collecte (constaté en CI le 2026-09-07).
       # Placée avant l'ingestion réelle : inutile de solliciter S3/Postgres
       # si la suite casse.
       - name: Tests (pytest)
